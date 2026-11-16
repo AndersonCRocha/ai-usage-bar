@@ -21,7 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let store = UsageStore()
+        let store = UsageStore(claudeCode: .standard, statusClient: ServiceStatusClient())
+        store.updateClaudeCodeCommand()
         self.store = store
         let updater = Updater()
         self.updater = updater
@@ -36,7 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter
             .publisher(for: NSWorkspace.didWakeNotification)
             .sink { [weak store, weak updater] _ in
-                Task { await store?.refresh() }
+                Task { await store?.refreshAll() }
                 updater?.checkIfStale()
             }
             .store(in: &cancellables)

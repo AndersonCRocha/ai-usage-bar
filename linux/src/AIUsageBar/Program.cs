@@ -1,3 +1,4 @@
+using AIUsageBar.Core;
 using Avalonia;
 using Avalonia.Controls;
 
@@ -11,6 +12,8 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // Claude Code's status line runs this after every response: quick, no window, no tray icon.
+        if (args.Contains(ClaudeCodeBridge.Flag)) return CliCommand.RunStatusLine();
         if (CliCommand.TryParse(args) is { } command) return command.Run();
 
         // The demo runs beside a real copy; anything else is one copy per user.

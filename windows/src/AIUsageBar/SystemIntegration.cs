@@ -229,6 +229,19 @@ internal static class InstalledApps
     }
 
     public static void Shell(string target) => Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+
+    /// <summary>Opens a web page in the default browser (a status page).</summary>
+    public static void OpenLink(Uri url)
+    {
+        try
+        {
+            Shell(url.AbsoluteUri);
+        }
+        catch (Exception)
+        {
+            // No browser to open it with.
+        }
+    }
 }
 
 /// <summary>Turns a Skia bitmap into a tray icon, owning the native handle.</summary>

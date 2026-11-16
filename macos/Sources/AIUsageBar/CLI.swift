@@ -6,11 +6,13 @@ import UsageCore
 /// the menu bar:
 ///
 ///     AIUsageBar --dump [--raw]
-///     AIUsageBar --snapshot out.png [--fixture claude.json] [--codex-fixture codex.json] [--copilot-fixture copilot.json] [--cursor-fixture cursor.json] [--gemini-fixture gemini.json] [--grok-fixture grok.json] [--dark] [--lang en|pt] [--tab claude|codex|copilot|cursor|gemini|grokBot|agents] [--first-run] [--update-available 9.9.9] [--tab-limit claude=weekly_all] [--layout tabs|list]
+///     AIUsageBar --snapshot out.png [--fixture claude.json] [--codex-fixture codex.json] [--copilot-fixture copilot.json] [--cursor-fixture cursor.json] [--gemini-fixture gemini.json] [--grok-fixture grok.json] [--dark] [--lang en|pt] [--tab claude|codex|copilot|cursor|gemini|grokBot|agents] [--first-run] [--update-available 9.9.9] [--tab-limit claude=weekly_all] [--layout tabs|list] [--service-status claude=degraded]
 ///     AIUsageBar --install-update [--no-relaunch]
+///     AIUsageBar --statusline | --install-statusline | --uninstall-statusline   (see `Main`)
 ///
 /// `--raw` also prints each service's usage response (no tokens).
 /// `--snapshot` also writes `out-menubar.png` with the status item image.
+/// `--service-status provider=maintenance|degraded|partial|major` draws a status page problem without reading any page.
 /// `--install-update` runs the in-app update from the command line: if GitHub
 /// has a newer release, it is installed over this app bundle once the command exits.
 struct CLICommand {
@@ -36,6 +38,7 @@ struct CLICommand {
     /// `provider=key`: what one agent's tab shows (a `TabLimit` key).
     let tabLimit: (ProviderID, String)?
     let layout: PopupLayout?
+    let serviceStatus: (ProviderID, StatusLevel)?
 
     init?(arguments: [String]) {
         func value(after flag: String) -> String? {
@@ -68,6 +71,12 @@ struct CLICommand {
             let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
             guard parts.count == 2, let id = ProviderID(rawValue: parts[0]) else { return nil }
             return (id, parts[1])
+        }
+        serviceStatus = value(after: "--service-status").flatMap { pair in
+            let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let id = ProviderID(rawValue: parts[0]) else { return nil }
+            let levels: [String: StatusLevel] = ["maintenance": .maintenance, "degraded": .degraded, "partial": .partialOutage, "major": .majorOutage]
+            return levels[parts[1]].map { (id, $0) }
         }
     }
 
@@ -118,8 +127,9 @@ struct CLICommand {
             }
             store = UsageStore(preview: snapshots)
         } else {
-            store = UsageStore()
+            store = UsageStore(claudeCode: .standard, statusClient: ServiceStatusClient())
             await store.refresh()
+            await store.refreshStatus(force: true)
         }
 
         if let language { AppLanguage.current = language }
@@ -127,6 +137,7 @@ struct CLICommand {
         if firstRun { store.previewFirstRun() }
         if let (id, key) = tabLimit { store.previewTabLimit(key, for: id) }
         if let layout { store.popupLayout = layout }
+        if let (id, level) = serviceStatus { store.previewServiceStatus(level, for: id) }
 
         switch mode {
         case .dump:

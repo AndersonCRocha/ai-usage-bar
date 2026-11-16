@@ -4,21 +4,37 @@ import UsageCore
 @MainActor
 final class UsageStore: ObservableObject {
     struct ProviderState {
+        /// What is shown: what the agent returned, plus for Claude any newer numbers from Claude Code.
         var snapshot: ProviderSnapshot?
         var lastUpdated: Date?
+        /// What the agent itself returned last, and when.
+        var fetched: ProviderSnapshot?
+        var fetchedAt: Date?
         var error: UsageError?
         var isLoading = false
         /// The last request, successful or not.
         var lastAttempt: Date?
         var backoff = RateLimitBackoff()
+        /// Claude, with the Claude Code switch off: a rate limit with nothing to show suggests turning it on.
+        var suggestsClaudeCode = false
+        /// What the service's public status page says; nil until it was read, or when it could not be read for a while.
+        var serviceStatus: ServiceStatus?
+        /// The last time the status page answered, and the last time it was asked.
+        var statusCheckedAt: Date?
+        var statusAttempt: Date?
+        var isCheckingStatus = false
 
         /// Waiting out a "too many requests": a notice, not a warning.
         var isRateLimited: Bool { error?.isRateLimit ?? false }
         /// An error worth flagging in the menu bar and on the tab.
         var hasWarning: Bool { error != nil && !isRateLimited }
+        /// The status page reports a problem (maintenance alone does not count).
+        var hasOutage: Bool { serviceStatus?.isProblem ?? false }
 
         func message(for id: ProviderID, now: Date = Date()) -> String? {
-            error?.message(for: id, retryAt: backoff.until, now: now)
+            guard let message = error?.message(for: id, retryAt: backoff.until, now: now) else { return nil }
+            guard suggestsClaudeCode, isRateLimited, snapshot == nil else { return message }
+            return message + " " + ClaudeCodeBridge.hint
         }
     }
 
@@ -53,11 +69,22 @@ final class UsageStore: ObservableObject {
             defaults.set(language.rawValue, forKey: Keys.language)
         }
     }
+    /// Claude Code's status line runs this app and hands it the Claude numbers.
+    @Published private(set) var readsClaudeCode = false
 
     static let refreshInterval: TimeInterval = 180
     /// Opening the popover, and every `openTick` while it stays open, asks again the agents asked longer ago than this.
     static let staleAfter: TimeInterval = 60
     static let openTick: TimeInterval = 15
+    /// How often the numbers Claude Code saved are looked at.
+    static let claudeCodeTick: TimeInterval = 15
+    /// How often the services' status pages are read; opening the popover reads the ones older than `statusStaleAfter`.
+    static let statusInterval: TimeInterval = 300
+    static let statusStaleAfter: TimeInterval = 120
+    /// The refresh button reads them again unless they were just read.
+    static let statusForcedAfter: TimeInterval = 15
+    /// A status page that has not answered for this long no longer counts: its last word may be out of date.
+    static let statusExpiresAfter: TimeInterval = 1800
 
     private let providers: [any UsageProvider]
     private let defaults: UserDefaults
@@ -68,6 +95,16 @@ final class UsageStore: ObservableObject {
     private var openTimer: Timer?
     /// Asks a rate-limited agent again as soon as its wait ends.
     private var retryTimer: Timer?
+    /// Claude Code's status line and the numbers it saved; nil in previews and most tests.
+    private let claudeCode: ClaudeCodeBridge?
+    private var claudeCodeReading: ClaudeCodeReading?
+    private var claudeCodeDate: Date?
+    private var claudeCodeTimer: Timer?
+    /// Reads the status pages; nil in previews and tests.
+    private let statusClient: (any ServiceStatusFetching)?
+    private var statusTimer: Timer?
+    /// What Claude Code's status line runs.
+    var executablePath: String? = Bundle.main.executablePath
     /// The current time; tests move it forward.
     var clock: () -> Date = { Date() }
 
@@ -90,10 +127,14 @@ final class UsageStore: ObservableObject {
 
     init(
         providers: [any UsageProvider] = [ClaudeProvider(), CodexProvider(), CopilotProvider(), CursorProvider(), GeminiProvider(), GrokBotProvider()],
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        claudeCode: ClaudeCodeBridge? = nil,
+        statusClient: (any ServiceStatusFetching)? = nil
     ) {
         self.providers = providers
         self.defaults = defaults
+        self.claudeCode = claudeCode
+        self.statusClient = statusClient
         Self.migrateFromClaudeUsage(into: defaults)
         // Settings saved by an older version: this is not a first run.
         let hadSettings = defaults.object(forKey: Keys.language) != nil
@@ -125,12 +166,16 @@ final class UsageStore: ObservableObject {
         }
         updateVisibleProviders()
         loadCache()
+        readsClaudeCode = claudeCode?.isInstalled() ?? false
+        loadClaudeCode()
     }
 
     /// Fixed data, no network: used by `--snapshot --fixture`.
     init(preview snapshots: [ProviderSnapshot], updated: Date = Date()) {
         providers = []
         defaults = .standard
+        claudeCode = nil
+        statusClient = nil
         onboardingDismissed = true
         hiddenProviders = []
         shownProviders = []
@@ -229,6 +274,7 @@ final class UsageStore: ObservableObject {
         defaults.set(Array(shownProviders), forKey: Keys.shownProviders)
         updateVisibleProviders()
         Task { await refresh() }
+        Task { await refreshStatus() }
     }
 
     /// One row per supported agent, connected or not, for the Agents tab.
@@ -273,6 +319,12 @@ final class UsageStore: ObservableObject {
         tabLimits[id] = key
     }
 
+    /// Shows a status page problem without reading any page (for `--snapshot --service-status`).
+    func previewServiceStatus(_ level: StatusLevel, for id: ProviderID) {
+        let url = id.statusPage?.pageURL ?? URL(string: "https://status.claude.com")!
+        states[id, default: ProviderState()].serviceStatus = ServiceStatus(level: level, incidents: ["Elevated error rates"], pageURL: url)
+    }
+
     /// Overrides the settings without saving them (for previews).
     func previewMenuBar(_ displays: [ProviderID: MenuBarDisplay]) {
         menuBarDisplays.merge(displays) { _, new in new }
@@ -286,8 +338,59 @@ final class UsageStore: ObservableObject {
                 provider: id,
                 display: menuBarDisplay(for: id),
                 snapshot: state.snapshot,
-                hasError: state.hasWarning
+                hasError: state.hasWarning,
+                alert: state.hasOutage ? state.serviceStatus?.severity : nil
             )
+        }
+    }
+
+    // MARK: Claude Code
+
+    /// The ⚙ → Claude switch exists (not in previews).
+    var canReadClaudeCode: Bool { claudeCode != nil }
+
+    /// Puts the app in Claude Code's status line, or puts the user's status line back.
+    func setReadsClaudeCode(_ on: Bool) throws {
+        guard let claudeCode else { return }
+        if on {
+            guard let executablePath else { return }
+            try claudeCode.install(executable: executablePath)
+        } else {
+            try claudeCode.uninstall()
+        }
+        readsClaudeCode = claudeCode.isInstalled()
+        loadClaudeCode(force: true)
+    }
+
+    /// At launch: points Claude Code's status line at where the app is now, in case it moved.
+    func updateClaudeCodeCommand() {
+        guard readsClaudeCode, let executablePath else { return }
+        claudeCode?.refresh(executable: executablePath)
+    }
+
+    /// Reloads the numbers Claude Code saved when they changed.
+    func loadClaudeCode(force: Bool = false) {
+        guard let claudeCode else { return }
+        let date = claudeCode.readingDate()
+        if force || date != claudeCodeDate {
+            claudeCodeDate = date
+            claudeCodeReading = claudeCode.loadReading()
+        }
+        showClaudeCode()
+        updateVisibleProviders()
+    }
+
+    /// Claude's numbers: the endpoint's, with Claude Code's where they are newer.
+    private func showClaudeCode() {
+        guard claudeCode != nil else { return }
+        var state = state(for: .claude)
+        let combined = ClaudeCodeUsage.combine(fetched: state.fetched, fetchedAt: state.fetchedAt, reading: claudeCodeReading, now: clock())
+        state.snapshot = combined.snapshot
+        state.lastUpdated = combined.updated
+        state.suggestsClaudeCode = !readsClaudeCode
+        let old = states[.claude]
+        if old?.snapshot != state.snapshot || old?.lastUpdated != state.lastUpdated || old?.suggestsClaudeCode != state.suggestsClaudeCode {
+            states[.claude] = state
         }
     }
 
@@ -310,6 +413,11 @@ final class UsageStore: ObservableObject {
         visibleProviders.contains { state(for: $0).hasWarning }
     }
 
+    /// A visible agent's service has a problem on its status page.
+    var hasOutage: Bool {
+        visibleProviders.contains { state(for: $0).hasOutage }
+    }
+
     /// The oldest successful update, so a stale service is not hidden.
     var lastUpdated: Date? {
         visibleProviders.compactMap { states[$0]?.lastUpdated }.min()
@@ -318,10 +426,11 @@ final class UsageStore: ObservableObject {
     var tooltip: String {
         let lines = visibleProviders.flatMap { id -> [String] in
             let state = state(for: id)
+            let outage = state.hasOutage ? state.serviceStatus.map { ["⚠ " + $0.title(for: id)] } ?? [] : []
             guard let snapshot = state.snapshot else {
-                return state.message(for: id, now: clock()).map { ["\(id.displayName): \($0)"] } ?? []
+                return outage + (state.message(for: id, now: clock()).map { ["\(id.displayName): \($0)"] } ?? [])
             }
-            return snapshot.items.map { "\(id.displayName) · \($0.title): \(UsageFormat.percent($0.percent))" }
+            return outage + snapshot.items.map { "\(id.displayName) · \($0.title): \(UsageFormat.percent($0.percent))" }
         }
         return lines.isEmpty ? tr("Uso de IA", "AI usage") : lines.joined(separator: "\n")
     }
@@ -337,11 +446,33 @@ final class UsageStore: ObservableObject {
         timer.tolerance = 20
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+
+        statusTimer?.invalidate()
+        if statusClient != nil {
+            Task { await refreshStatus() }
+            let statusTimer = Timer(timeInterval: Self.statusInterval, repeats: true) { [weak self] _ in
+                Task { @MainActor in await self?.refreshStatus() }
+            }
+            statusTimer.tolerance = 30
+            RunLoop.main.add(statusTimer, forMode: .common)
+            self.statusTimer = statusTimer
+        }
+
+        claudeCodeTimer?.invalidate()
+        guard claudeCode != nil else { return }
+        let claudeCodeTimer = Timer(timeInterval: Self.claudeCodeTick, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.loadClaudeCode() }
+        }
+        claudeCodeTimer.tolerance = 3
+        RunLoop.main.add(claudeCodeTimer, forMode: .common)
+        self.claudeCodeTimer = claudeCodeTimer
     }
 
     /// Refreshes what is stale now and every minute while the popover stays open.
     func popoverDidOpen() {
+        loadClaudeCode()
         Task { await refreshIfStale() }
+        Task { await refreshStatus() }
         openTimer?.invalidate()
         let timer = Timer(timeInterval: Self.openTick, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refreshIfStale() }
@@ -371,6 +502,53 @@ final class UsageStore: ObservableObject {
         await refresh { _ in true }
     }
 
+    /// The refresh button and waking from sleep: usage and the status pages together.
+    func refreshAll() async {
+        async let usage: Void = refresh()
+        async let status: Void = refreshStatus(force: true)
+        _ = await (usage, status)
+    }
+
+    /// Reads the status pages of the agents shown, except one read in the last two minutes
+    /// (15 seconds with `force`). Separate from the usage requests and their rate-limit waits:
+    /// the pages are public and say nothing about the user.
+    func refreshStatus(force: Bool = false) async {
+        guard let statusClient else { return }
+        let now = clock()
+        let staleAfter = force ? Self.statusForcedAfter : Self.statusStaleAfter
+        let targets: [(ProviderID, StatusPage)] = visibleProviders.compactMap { id in
+            guard let page = id.statusPage else { return nil }
+            let state = state(for: id)
+            if state.isCheckingStatus { return nil }
+            if let last = state.statusAttempt, now.timeIntervalSince(last) < staleAfter { return nil }
+            return (id, page)
+        }
+        guard !targets.isEmpty else { return }
+        for (id, _) in targets {
+            states[id, default: ProviderState()].isCheckingStatus = true
+            states[id]?.statusAttempt = now
+        }
+
+        await withTaskGroup(of: (ProviderID, ServiceStatus?).self) { group in
+            for (id, page) in targets {
+                group.addTask { (id, try? await statusClient.fetch(page)) }
+            }
+            for await (id, status) in group {
+                var state = state(for: id)
+                state.isCheckingStatus = false
+                if let status {
+                    state.serviceStatus = status
+                    state.statusCheckedAt = clock()
+                } else if let checked = state.statusCheckedAt, clock().timeIntervalSince(checked) < Self.statusExpiresAfter {
+                    // Keeps the last answer: the page may just be slow, or the network down.
+                } else {
+                    state.serviceStatus = nil
+                }
+                states[id] = state
+            }
+        }
+    }
+
     private func refresh(where wanted: (ProviderState) -> Bool) async {
         updateVisibleProviders()
         let now = clock()
@@ -398,6 +576,10 @@ final class UsageStore: ObservableObject {
         }
         scheduleRetry()
         updateVisibleProviders()
+        // An agent that just showed up gets its status page read now, not at the next tick.
+        if statusClient != nil, visibleProviders.contains(where: { $0.statusPage != nil && state(for: $0).statusAttempt == nil }) {
+            Task { await refreshStatus() }
+        }
     }
 
     private func apply(_ result: Result<ProviderFetchResult, Error>, to id: ProviderID) {
@@ -408,6 +590,8 @@ final class UsageStore: ObservableObject {
             let now = clock()
             state.snapshot = fetched.snapshot
             state.lastUpdated = now
+            state.fetched = fetched.snapshot
+            state.fetchedAt = now
             state.error = nil
             state.backoff.reset()
             defaults.set(fetched.cache, forKey: Keys.cache(id))
@@ -420,6 +604,7 @@ final class UsageStore: ObservableObject {
             }
         }
         states[id] = state
+        if id == .claude { showClaudeCode() }
     }
 
     /// Asks the rate-limited agents again when the first wait ends, instead of at the next 3-minute tick.
@@ -457,10 +642,8 @@ final class UsageStore: ObservableObject {
             guard let data = defaults.data(forKey: Keys.cache(provider.id)),
                   let snapshot = provider.snapshot(fromCache: data)
             else { continue }
-            states[provider.id] = ProviderState(
-                snapshot: snapshot,
-                lastUpdated: defaults.object(forKey: Keys.cachedAt(provider.id)) as? Date
-            )
+            let cachedAt = defaults.object(forKey: Keys.cachedAt(provider.id)) as? Date
+            states[provider.id] = ProviderState(snapshot: snapshot, lastUpdated: cachedAt, fetched: snapshot, fetchedAt: cachedAt)
         }
     }
 
@@ -474,11 +657,22 @@ final class UsageStore: ObservableObject {
             lines.append("== \(id.displayName)\(state.snapshot?.planName.map { " (\($0))" } ?? "")")
             if let updated = state.lastUpdated { lines.append(UsageFormat.updated(updated)) }
             if let message = state.message(for: id, now: clock()) { lines.append(tr("Aviso: ", "Warning: ") + message) }
+            if let status = state.serviceStatus, status.isNotice {
+                let details = status.detailLines.joined(separator: "; ")
+                lines.append("Status: " + status.title(for: id) + (details.isEmpty ? "" : " — " + details))
+            }
             for item in state.snapshot?.items ?? [] {
                 let reset = item.resetsAt.map { " — \(UsageFormat.reset($0))" } ?? ""
                 lines.append("• \(item.title): \(UsageFormat.percent(item.percent)) [\(item.severity)]\(reset)")
             }
             for note in state.snapshot?.notes ?? [] { lines.append("ℹ︎ \(note)") }
+            if id == .claude, let reading = claudeCodeReading?.current(now: clock()), !reading.isEmpty {
+                let parts = [("5 h", reading.session), ("7 d", reading.weekly)].compactMap { name, window in
+                    window.map { "\(name) \(UsageFormat.percent($0.percent))" }
+                }
+                let seen = [reading.session?.seenAt, reading.weekly?.seenAt].compactMap { $0 }.max()
+                lines.append("ℹ︎ Claude Code (statusline): " + parts.joined(separator: " · ") + (seen.map { " — " + UsageFormat.updated($0, now: clock()) } ?? ""))
+            }
             let breakdown = (state.snapshot?.breakdown ?? []).map { "\($0.name) \(UsageFormat.percent($0.percent))" }
             if !breakdown.isEmpty { lines.append(tr("Divisão da semana: ", "Weekly split: ") + breakdown.joined(separator: ", ")) }
         }

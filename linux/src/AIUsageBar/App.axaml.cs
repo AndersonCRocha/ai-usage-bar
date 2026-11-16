@@ -39,6 +39,7 @@ public partial class App : Application
         {
             settings = CliCommand.FixtureSettings(args);
             store = new UsageStore(settings, CliCommand.FixtureSnapshots(args));
+            CliCommand.PreviewServiceStatuses(store, args);
             updater = AppVersion.Parse(CliCommand.Option(args, "--update-available")) is { } update
                 ? Updater.Preview(update, Updater.RunningVersion)
                 : new Updater(current: null);
@@ -47,7 +48,8 @@ public partial class App : Application
         {
             settings = AppSettings.Load();
             Localization.Current = settings.LanguageValue;
-            store = new UsageStore(settings, UsageStore.AllProviders());
+            store = new UsageStore(settings, UsageStore.AllProviders(), CliCommand.ClaudeCode(), new ServiceStatusClient()) { ExecutablePath = Launcher.Path };
+            store.UpdateClaudeCodeCommand();
             updater = new Updater(Updater.RunningVersion);
         }
         Theme.Apply(forceDark: args.Contains("--dark") ? true : null);

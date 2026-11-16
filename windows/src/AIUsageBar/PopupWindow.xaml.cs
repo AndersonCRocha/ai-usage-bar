@@ -184,6 +184,11 @@ public partial class PopupWindow : Window
             }
             agent.Items.Add(tray);
             if (settings.Layout == PopupLayout.Tabs) agent.Items.Add(TabLimitMenu(id, T("Na aba", "In its tab")));
+            if (id == ProviderId.Claude && store.CanReadClaudeCode)
+            {
+                var reads = store.ReadsClaudeCode;
+                agent.Items.Add(Check(ClaudeCodeBridge.MenuTitle, reads, () => SetReadsClaudeCode(!reads)));
+            }
             menu.Items.Add(agent);
         }
 
@@ -214,6 +219,19 @@ public partial class PopupWindow : Window
         menu.Items.Add(quit);
 
         menu.IsOpen = true;
+    }
+
+    /// <summary>Changes Claude Code's settings.json; says why when it can't.</summary>
+    private void SetReadsClaudeCode(bool on)
+    {
+        try
+        {
+            store.SetReadsClaudeCode(on);
+        }
+        catch (ClaudeCodeSetupException error)
+        {
+            System.Windows.MessageBox.Show(error.Message, ClaudeCodeBridge.MenuTitle);
+        }
     }
 
     /// <summary>What an agent's tab shows: the fullest limit or any one of its limits.</summary>

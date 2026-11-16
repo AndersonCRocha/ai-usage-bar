@@ -44,7 +44,7 @@ internal sealed class PopupViewModel
             SettingsTip = T("Opções", "Options"),
             RefreshVisible = !loading,
             LoadingVisible = loading,
-            RefreshCommand = new RelayCommand(async () => await store.RefreshAsync()),
+            RefreshCommand = new RelayCommand(async () => await store.RefreshNowAsync()),
             Providers = [.. store.VisibleProviders
                 .Where(id => store.ShowsAllProviders || (!onAgents && id.Key() == current))
                 .Select(id => ProviderViewModel.Build(id, store.State(id)))],
@@ -101,11 +101,12 @@ internal sealed record TabViewModel(
         foreach (var id in store.VisibleProviders)
         {
             var state = store.State(id);
-            var summary = TabSummary.Make(state.Snapshot, state.HasWarning, store.Settings.TabLimitFor(id));
+            var summary = TabSummary.Make(state.Snapshot, state.HasWarning || state.HasOutage, store.Settings.TabLimitFor(id));
             var isCurrent = id.Key() == current;
             var spoken = summary.Text is "!" or "–"
                 ? T("sem dados", "no data")
                 : T($"{summary.Text} usado", $"{summary.Text} used");
+            if (state.HasOutage) spoken += ", " + state.ServiceStatus!.Title(id);
             var (width, showName, showStatus) = Layout(store.VisibleProviders.Count, isCurrent);
             tabs.Add(new TabViewModel(
                 id.Key(),
@@ -283,6 +284,9 @@ internal sealed class ProviderViewModel
     public required bool PlanVisible { get; init; }
     public required string OpenTip { get; init; }
     public required ICommand OpenCommand { get; init; }
+    /// <summary>The service's status page reports a problem or maintenance: above the other banners.</summary>
+    public required ServiceStatusBannerViewModel? Status { get; init; }
+    public required bool StatusVisible { get; init; }
     public required string? ErrorText { get; init; }
     public required bool ErrorVisible { get; init; }
     /// <summary>"Too many refreshes": shown without the warning look, above the last numbers.</summary>
@@ -307,6 +311,8 @@ internal sealed class ProviderViewModel
             PlanVisible = snapshot?.PlanName is not null,
             OpenTip = id.Descriptor().OpenTip(),
             OpenCommand = new RelayCommand(() => InstalledApps.Open(id)),
+            Status = state.ServiceStatus is { IsNotice: true } status ? ServiceStatusBannerViewModel.Build(id, status) : null,
+            StatusVisible = state.ServiceStatus?.IsNotice == true,
             ErrorText = state.HasWarning ? state.MessageFor(id) : null,
             ErrorVisible = state.HasWarning,
             NoticeText = state.IsRateLimited ? state.MessageFor(id) : null,
@@ -320,6 +326,37 @@ internal sealed class ProviderViewModel
             LoadingVisible = snapshot is null && state.Error is null,
         };
     }
+}
+
+/// <summary>"Claude is having issues", the open incidents and affected parts, and a link to the status page.</summary>
+internal sealed record ServiceStatusBannerViewModel(
+    string Title,
+    IReadOnlyList<string> Details,
+    IBrush IconBrush,
+    IBrush Background,
+    string LinkText,
+    string LinkTip,
+    ICommand LinkCommand)
+{
+    /// <summary>Red for an outage, orange for trouble, grey for maintenance (which is only shown here).</summary>
+    public static ServiceStatusBannerViewModel Build(ProviderId id, ServiceStatus status) => new(
+        status.Title(id),
+        status.DetailLines,
+        status.Level switch
+        {
+            StatusLevel.MajorOutage => Theme.Critical,
+            StatusLevel.Maintenance => Theme.SecondaryText,
+            _ => Theme.Warning,
+        },
+        status.Level switch
+        {
+            StatusLevel.MajorOutage => Theme.CriticalBackground,
+            StatusLevel.Maintenance => Theme.BadgeBackground,
+            _ => Theme.ErrorBackground,
+        },
+        ServiceStatus.LinkTitle,
+        status.PageUrl.Host,
+        new RelayCommand(() => Shell.Open(status.PageUrl.AbsoluteUri)));
 }
 
 internal sealed record LimitViewModel(string Title, string PercentText, double Fraction, IBrush Brush, string ResetText, bool ResetVisible)

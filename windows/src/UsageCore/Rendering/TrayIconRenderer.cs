@@ -6,7 +6,8 @@ namespace AIUsageBar.Core.Rendering;
 /// Draws one service's tray icon: a ring that fills with usage around either
 /// the service's glyph or the percentage. Monochrome in the taskbar's color
 /// (white on a dark taskbar, near-black on a light one); only the ring turns
-/// orange or red when a limit is close and alert colors are on.
+/// orange or red when a limit is close and alert colors are on. A problem on the service's status page
+/// adds a small badge on the ring's top right.
 /// </summary>
 public static class TrayIconRenderer
 {
@@ -61,7 +62,41 @@ public static class TrayIconRenderer
         {
             DrawNumber(canvas, provider.Initial(), inner, foreground);
         }
+        if (segment?.Alert is { } alert) DrawBadge(canvas, size, BadgeColor(alert, foreground, colorAlerts));
         return bitmap;
+    }
+
+    /// <summary>The badge is a color only with alert colors on; otherwise it is drawn like the rest of the icon.</summary>
+    private static SKColor BadgeColor(Severity alert, SKColor foreground, bool colorAlerts) =>
+        !colorAlerts ? foreground : alert == Severity.Critical ? Red : Orange;
+
+    /// <summary>The smallest badge, in pixels, with room for a "!" that can be read.</summary>
+    private const float MarkedBadge = 11;
+
+    /// <summary>
+    /// The status page reports a problem: a dot 40% of the ring's width on its top right, cut out of whatever
+    /// it covers by a thin transparent gap so it stands apart on any taskbar. The "!" in it is cut out too, and
+    /// left out where it would only be a smudge (16–24 px icons): the dot alone says it there.
+    /// </summary>
+    internal static void DrawBadge(SKCanvas canvas, int size, SKColor color)
+    {
+        var radius = size * 0.2f;
+        var center = new SKPoint(size - radius, radius);
+        // About 1 px once the panel shows the icon (Linux draws it at 48 px and lets the panel scale it).
+        var gap = Math.Max(1f, size / 24f);
+
+        using var clear = new SKPaint { IsAntialias = true, BlendMode = SKBlendMode.Clear };
+        canvas.DrawCircle(center, radius + gap, clear);
+        using (var fill = new SKPaint { IsAntialias = true, Color = color })
+        {
+            canvas.DrawCircle(center, radius, fill);
+        }
+        if (radius * 2 < MarkedBadge) return;
+
+        var width = radius * 0.32f;
+        var stem = SKRect.Create(center.X - width / 2, center.Y - radius * 0.6f, width, radius * 0.78f);
+        canvas.DrawRoundRect(stem, width / 2, width / 2, clear);
+        canvas.DrawCircle(center.X, center.Y + radius * 0.48f, width * 0.6f, clear);
     }
 
     private static SKColor RingColor(Severity severity, SKColor foreground, bool colorAlerts) =>

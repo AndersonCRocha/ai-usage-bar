@@ -16,6 +16,13 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
 
+        // Claude Code's status line runs this after every response: no window, no tray icon, no single-instance check.
+        if (e.Args.Contains(ClaudeCodeBridge.Flag))
+        {
+            Shutdown(CliCommand.RunStatusLine());
+            return;
+        }
+
         if (CliCommand.TryParse(e.Args) is { } command)
         {
             var exitCode = await command.RunAsync();
@@ -41,7 +48,11 @@ public partial class App : System.Windows.Application
         Localization.Current = settings.LanguageValue;
         Theme.Apply();
 
-        store = new UsageStore(settings, [new ClaudeProvider(), new CodexProvider(), new CopilotProvider(), new CursorProvider(), new GeminiProvider(), new GrokBotProvider(new DpapiUnprotector())]);
+        store = new UsageStore(settings, [new ClaudeProvider(), new CodexProvider(), new CopilotProvider(), new CursorProvider(), new GeminiProvider(), new GrokBotProvider(new DpapiUnprotector())], CliCommand.ClaudeCode(), new ServiceStatusClient())
+        {
+            ExecutablePath = Environment.ProcessPath,
+        };
+        store.UpdateClaudeCodeCommand();
         updater = new Updater(Updater.RunningVersion);
         tray = new TrayController(store, updater);
         store.Start();
@@ -66,6 +77,7 @@ public partial class App : System.Windows.Application
             TaskbarStyle = args.Contains("--ring-only") ? TaskbarStyle.RingOnly : TaskbarStyle.RingAndPercent,
         };
         store = new UsageStore(demo, CliCommand.FixtureSnapshots(args));
+        CliCommand.PreviewServiceStatuses(store, args);
         tray = new TrayController(store, new Updater(current: null));
     }
 
@@ -86,6 +98,7 @@ public partial class App : System.Windows.Application
             Dispatcher.InvokeAsync(() =>
             {
                 _ = store.RefreshAsync();
+                _ = store.RefreshStatusAsync();
                 updater?.CheckIfStale();
             });
         }

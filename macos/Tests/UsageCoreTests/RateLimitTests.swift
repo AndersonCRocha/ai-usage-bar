@@ -15,10 +15,12 @@ final class RateLimitTests: XCTestCase {
         XCTAssertEqual(RateLimitBackoff.wait(strikes: 500, serverWait: nil), 600)
     }
 
-    func testServerWaitWinsWithinBounds() {
-        XCTAssertEqual(RateLimitBackoff.wait(strikes: 3, serverWait: 90), 90)
-        XCTAssertEqual(RateLimitBackoff.wait(strikes: 1, serverWait: 2), 15, "a tiny Retry-After does not make it hammer the server")
-        XCTAssertEqual(RateLimitBackoff.wait(strikes: 1, serverWait: -30), 15, "a date in the past")
+    func testServerWaitOnlyMakesItLonger() {
+        XCTAssertEqual(RateLimitBackoff.wait(strikes: 1, serverWait: 300), 300)
+        XCTAssertEqual(RateLimitBackoff.wait(strikes: 3, serverWait: 90), 240, "a shorter Retry-After does not cut the wait")
+        XCTAssertEqual(RateLimitBackoff.wait(strikes: 1, serverWait: 0), 60, "retry-after: 0 does not make it hammer the server")
+        XCTAssertEqual(RateLimitBackoff.wait(strikes: 4, serverWait: 0), 480, "it still escalates")
+        XCTAssertEqual(RateLimitBackoff.wait(strikes: 1, serverWait: -30), 60, "a date in the past")
         XCTAssertEqual(RateLimitBackoff.wait(strikes: 1, serverWait: 86_400), 3600)
     }
 

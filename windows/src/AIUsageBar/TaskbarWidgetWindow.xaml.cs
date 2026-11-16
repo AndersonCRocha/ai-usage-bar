@@ -135,7 +135,7 @@ public partial class TaskbarWidgetWindow : Window
             var state = store.State(id);
             // The widget is independent of the tray: an agent hidden there still shows here.
             var display = settings.DisplayFor(id) == TrayDisplay.Hidden ? TrayOptions.Default(id) : settings.DisplayFor(id);
-            var segment = TraySegment.Make(id, display, state.Snapshot, state.MessageFor(id), state.IsRateLimited);
+            var segment = TraySegment.Make(id, display, state.Snapshot, state.MessageFor(id), state.IsRateLimited, state.ServiceStatus);
             if (segment is null) continue;
 
             using var ring = TrayIconRenderer.Render(
@@ -149,7 +149,7 @@ public partial class TaskbarWidgetWindow : Window
                 withPercent ? Visibility.Visible : Visibility.Collapsed,
                 settings.ColorAlerts ? SeverityText(segment.Severity, dark) : TextBrush(dark),
                 withPercent ? new Thickness(5, 0, 11, 0) : new Thickness(3, 0, 3, 0),
-                $"{id.DisplayName()}, {percent}"));
+                $"{id.DisplayName()}, {percent}" + (state.HasOutage ? ", " + state.ServiceStatus!.Title(id) : "")));
         }
         return chips;
     }
@@ -337,7 +337,7 @@ public partial class TaskbarWidgetWindow : Window
         var menu = new ContextMenu { PlacementTarget = Pill, Placement = taskbarOnTop ? PlacementMode.Bottom : PlacementMode.Top };
 
         var refresh = new MenuItem { Header = T("Atualizar agora", "Refresh now") };
-        refresh.Click += async (_, _) => await store.RefreshAsync();
+        refresh.Click += async (_, _) => await store.RefreshNowAsync();
         menu.Items.Add(refresh);
         menu.Items.Add(new Separator());
         TaskbarMenu.AddOptions(menu.Items, store, includeToggle: false);

@@ -234,6 +234,11 @@ public partial class PopupWindow : Window
                 foreach (var option in TabLimitItems(id)) tab.Items.Add(option);
                 agent.Items.Add(tab);
             }
+            if (id == ProviderId.Claude && store.CanReadClaudeCode)
+            {
+                var reads = store.ReadsClaudeCode;
+                agent.Items.Add(Check(ClaudeCodeBridge.MenuTitle, reads, () => SetReadsClaudeCode(!reads)));
+            }
             menu.Items.Add(agent);
         }
 
@@ -282,6 +287,19 @@ public partial class PopupWindow : Window
             Dispatcher.UIThread.Post(() => { if (!IsActive) HidePopup(); }, DispatcherPriority.Background);
         };
         menu.Open(target);
+    }
+
+    /// <summary>Changes Claude Code's settings.json; the switch stays as it was when that fails.</summary>
+    private void SetReadsClaudeCode(bool on)
+    {
+        try
+        {
+            store.SetReadsClaudeCode(on);
+        }
+        catch (ClaudeCodeSetupException error)
+        {
+            Console.Error.WriteLine(error.Message);
+        }
     }
 
     private IEnumerable<MenuItem> TabLimitItems(ProviderId id)

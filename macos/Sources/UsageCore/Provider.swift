@@ -97,6 +97,8 @@ public enum SnapshotNote: Hashable, Sendable {
     case onDemandSpend(cents: Int, limit: Int?)
     /// Cursor: on-demand spending against the team's pool, in US cents.
     case teamOnDemandSpend(cents: Int, limit: Int)
+    /// Claude: only the numbers Claude Code saw, because the usage endpoint has not answered yet.
+    case fromClaudeCode
 
     public var text: String {
         switch self {
@@ -124,6 +126,11 @@ public enum SnapshotNote: Hashable, Sendable {
             let used = UsageFormat.dollars(cents)
             let pool = UsageFormat.dollars(limit)
             return tr("Sob demanda da equipe: \(used) de \(pool)", "Team on-demand: \(used) of \(pool)")
+        case .fromClaudeCode:
+            return tr(
+                "Números do Claude Code no terminal. Os outros limites voltam quando o servidor responder.",
+                "Numbers from Claude Code in the terminal. The other limits come back when the server answers."
+            )
         }
     }
 }

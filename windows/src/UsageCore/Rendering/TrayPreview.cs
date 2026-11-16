@@ -22,11 +22,13 @@ public static class TrayPreview
 
     private static readonly int[] Sizes = [16, 20, 24, 32];
 
+    /// <summary><paramref name="statuses"/>: status pages to pretend, so the outage badge can be judged too.</summary>
     public static byte[] RenderPng(
         IReadOnlyList<ProviderSnapshot> snapshots,
         IReadOnlyDictionary<ProviderId, Glyph> glyphs,
         IReadOnlyList<Variant>? variants = null,
-        int zoom = 4)
+        int zoom = 4,
+        IReadOnlyDictionary<ProviderId, ServiceStatus>? statuses = null)
     {
         variants ??= DefaultVariants;
         const int labelWidth = 230, padding = 12, gapBetweenIcons = 6;
@@ -61,7 +63,7 @@ public static class TrayPreview
                     foreach (var snapshot in snapshots)
                     {
                         var display = variant.Displays.GetValueOrDefault(snapshot.Provider, TrayOptions.Default(snapshot.Provider));
-                        var segment = TraySegment.Make(snapshot.Provider, display, snapshot, null);
+                        var segment = TraySegment.Make(snapshot.Provider, display, snapshot, null, status: statuses?.GetValueOrDefault(snapshot.Provider));
                         if (segment is null) continue;
                         using var icon = TrayIconRenderer.Render(segment, snapshot.Provider, variant.Style,
                             glyphs.GetValueOrDefault(snapshot.Provider), variant.ColorAlerts, dark, size);

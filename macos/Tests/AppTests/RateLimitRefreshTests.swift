@@ -48,10 +48,29 @@ final class RateLimitRefreshTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
     }
 
-    private func makeStore(_ providers: [ScriptedProvider]) -> UsageStore {
-        let store = UsageStore(providers: providers, defaults: defaults)
+    private func makeStore(_ providers: [ScriptedProvider], claudeCode: ClaudeCodeBridge? = nil) -> UsageStore {
+        let store = UsageStore(providers: providers, defaults: defaults, claudeCode: claudeCode)
         store.clock = { [unowned self] in self.time }
+        store.executablePath = "/Applications/AI Usage Bar.app/Contents/MacOS/AIUsageBar"
         return store
+    }
+
+    private var folder: URL!
+
+    /// Claude Code's status line files, in a temporary folder.
+    private func makeBridge() throws -> ClaudeCodeBridge {
+        folder = FileManager.default.temporaryDirectory.appendingPathComponent("ClaudeCodeStore-\(UUID().uuidString)")
+        addTeardownBlock { [folder] in try? FileManager.default.removeItem(at: folder!) }
+        return ClaudeCodeBridge(directory: folder.appendingPathComponent("app"), settingsURL: folder.appendingPathComponent("claude/settings.json"))
+    }
+
+    /// What Claude Code hands its status line command, seen at `time`.
+    private func record(_ bridge: ClaudeCodeBridge, session: Double, weekly: Double) {
+        let limits: [String: Any] = [
+            "five_hour": ["used_percentage": session, "resets_at": time.addingTimeInterval(3 * 3600).timeIntervalSince1970],
+            "seven_day": ["used_percentage": weekly, "resets_at": time.addingTimeInterval(4 * 86_400).timeIntervalSince1970],
+        ]
+        bridge.record(statusLine: try! JSONSerialization.data(withJSONObject: ["rate_limits": limits]), now: time)
     }
 
     private func wait(_ seconds: TimeInterval) { time += seconds }
@@ -134,5 +153,62 @@ final class RateLimitRefreshTests: XCTestCase {
         wait(30)
         await store.refreshIfStale()
         XCTAssertEqual([claude.calls, codex.calls], [2, 2])
+    }
+
+    // MARK: Claude Code's numbers
+
+    func testShowsClaudeCodesNumbersWhenTheEndpointRefusesFromTheStart() async throws {
+        let bridge = try makeBridge()
+        let store = makeStore([ScriptedProvider(id: .claude, answers: [tooMany])], claudeCode: bridge)
+        try store.setReadsClaudeCode(true)
+        record(bridge, session: 4, weekly: 19)
+        await store.refresh()
+        store.loadClaudeCode()
+
+        let state = store.state(for: .claude)
+        XCTAssertTrue(state.isRateLimited)
+        XCTAssertEqual(state.snapshot?.items.map(\.percent), [4, 19])
+        XCTAssertEqual(state.snapshot?.notes, [.fromClaudeCode])
+        XCTAssertEqual(state.lastUpdated, time)
+        XCTAssertEqual(store.visibleProviders, [.claude], "Claude shows up with Claude Code's numbers alone")
+        XCTAssertEqual(store.menuBarSegments.first?.lines, ["4%", "19%"])
+        XCTAssertEqual(state.message(for: .claude, now: time), "Muitas atualizações seguidas. Aguarde um pouquinho: tento de novo em 1 min.")
+    }
+
+    func testSuggestsTheSwitchOnlyWhenThereIsNothingToShow() async throws {
+        let bridge = try makeBridge()
+        let store = makeStore([ScriptedProvider(id: .claude, answers: [tooMany])], claudeCode: bridge)
+        await store.refresh()
+        XCTAssertEqual(
+            store.state(for: .claude).message(for: .claude, now: time),
+            "Muitas atualizações seguidas. Aguarde um pouquinho: tento de novo em 1 min. " + ClaudeCodeBridge.hint
+        )
+        XCTAssertNil(makeStore([], claudeCode: nil).state(for: .claude).message(for: .claude), "no switch, no hint")
+
+        try store.setReadsClaudeCode(true)
+        XCTAssertTrue(store.readsClaudeCode)
+        XCTAssertTrue(bridge.isInstalled())
+        XCTAssertFalse(store.state(for: .claude).message(for: .claude, now: time)?.contains("⚙") ?? true)
+
+        try store.setReadsClaudeCode(false)
+        XCTAssertFalse(store.readsClaudeCode)
+        XCTAssertFalse(bridge.isInstalled())
+    }
+
+    func testNewerClaudeCodeNumbersRaiseTheEndpoints() async throws {
+        let bridge = try makeBridge()
+        let store = makeStore([ScriptedProvider(id: .claude, answers: [nil])], claudeCode: bridge)
+        await store.refresh()
+        let fetchedAt = time
+        XCTAssertEqual(store.state(for: .claude).snapshot?.items.first?.percent, 40)
+
+        wait(60)
+        record(bridge, session: 55, weekly: 19)
+        store.loadClaudeCode(force: true)
+        let state = store.state(for: .claude)
+        XCTAssertEqual(state.snapshot?.items.first?.percent, 55)
+        XCTAssertEqual(state.lastUpdated, time)
+        XCTAssertEqual(state.fetchedAt, fetchedAt)
+        XCTAssertEqual(state.fetched?.items.first?.percent, 40, "what the endpoint said is kept apart")
     }
 }

@@ -36,22 +36,32 @@ public static class TrayOptions
         : T("Número no anel", "Number in ring");
 }
 
-/// <summary>One service's tray icon: a ring and, depending on the style, a glyph or a number.</summary>
-public sealed record TraySegment(ProviderId Provider, double? RingPercent, Severity Severity, string Number, string Tooltip)
+/// <summary>
+/// One service's tray icon: a ring and, depending on the style, a glyph or a number.
+/// <paramref name="Alert"/>: the service's status page reports a problem, drawn as a badge on the ring.
+/// </summary>
+public sealed record TraySegment(ProviderId Provider, double? RingPercent, Severity Severity, string Number, string Tooltip, Severity? Alert = null)
 {
     /// <summary>Windows truncates tray tooltips at 127 characters.</summary>
     public const int TooltipLimit = 127;
 
-    /// <summary><paramref name="isNotice"/>: <paramref name="error"/> is the "too many refreshes" notice, not a warning.</summary>
-    public static TraySegment? Make(ProviderId provider, TrayDisplay display, ProviderSnapshot? snapshot, string? error, bool isNotice = false)
+    /// <summary>
+    /// <paramref name="isNotice"/>: <paramref name="error"/> is the "too many refreshes" notice, not a warning.
+    /// <paramref name="status"/>: what the service's status page says; a problem there adds the badge and a tooltip line.
+    /// </summary>
+    public static TraySegment? Make(
+        ProviderId provider, TrayDisplay display, ProviderSnapshot? snapshot, string? error, bool isNotice = false, ServiceStatus? status = null)
     {
         if (display == TrayDisplay.Hidden) return null;
 
+        var outage = status is { IsProblem: true } ? status : null;
         var items = snapshot?.Items ?? [];
         if (items.Count == 0)
         {
-            var status = error ?? T("Carregando…", "Loading…");
-            return new TraySegment(provider, null, Severity.Normal, error is null || isNotice ? "–" : "!", Clip($"{provider.DisplayName()}: {status}"));
+            var text = error ?? T("Carregando…", "Loading…");
+            // The outage first: a long error would push it past the 127-character limit.
+            var tooltip = (outage is null ? "" : "⚠ " + outage.Title(provider) + "\n") + $"{provider.DisplayName()}: {text}";
+            return new TraySegment(provider, null, Severity.Normal, error is null || isNotice ? "–" : "!", Clip(tooltip), outage?.Severity);
         }
 
         var session = items.FirstOrDefault(i => i.Group == LimitGroup.Session);
@@ -60,9 +70,11 @@ public sealed record TraySegment(ProviderId Provider, double? RingPercent, Sever
             ?? items.MaxBy(i => i.Percent)!;
 
         var lines = new List<string> { provider.DisplayName() };
+        // Right under the name: the 127-character limit cuts the end of a long tooltip.
+        if (outage is not null) lines.Add("⚠ " + outage.Title(provider));
         lines.AddRange(items.Select(i => $"{i.Title}: {UsageFormat.Percent(i.Percent)}"));
         if (error is not null) lines.Add((isNotice ? "ⓘ " : "⚠ ") + error);
-        return new TraySegment(provider, shown.Percent, shown.Severity, FormatNumber(shown.Percent), Clip(string.Join('\n', lines)));
+        return new TraySegment(provider, shown.Percent, shown.Severity, FormatNumber(shown.Percent), Clip(string.Join('\n', lines)), outage?.Severity);
     }
 
     /// <summary>"88", "&lt;1", "100": the percentage without the sign, to fit the ring.</summary>

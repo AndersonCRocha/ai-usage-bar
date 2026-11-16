@@ -48,6 +48,7 @@ internal static class Theme
         Set("ErrorBackground", 0x26FF8C00);
         Set("WarningBrush", 0xFFFF8C00);
         Set("CriticalBrush", 0xFFE81123);
+        Set("CriticalBackground", 0x26E81123);
         var accent = AccentColor(dark);
         resources["AccentBrush"] = Freeze(new SolidColorBrush(accent));
         resources["UpdateBackground"] = Freeze(new SolidColorBrush(Color.FromArgb(0x26, accent.R, accent.G, accent.B)));

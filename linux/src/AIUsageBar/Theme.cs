@@ -21,6 +21,8 @@ internal static class Theme
     public static IBrush PrimaryText { get; private set; } = Brushes.Black;
     public static IBrush UpdateBackground { get; private set; } = Brushes.Transparent;
     public static IBrush ErrorBackground { get; private set; } = Brushes.Transparent;
+    public static IBrush CriticalBackground { get; private set; } = Brushes.Transparent;
+    public static IBrush BadgeBackground { get; private set; } = Brushes.Transparent;
 
     /// <summary>The desktop session, from <c>XDG_CURRENT_DESKTOP</c> ("GNOME", "KDE", "ubuntu:GNOME"…).</summary>
     public static string Desktop => Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP") ?? "";
@@ -64,7 +66,7 @@ internal static class Theme
             SecondaryText = Set("SecondaryText", 0xFFA6A6A6);
             Set("TrackBrush", 0x26FFFFFF);
             Set("Divider", 0xFF3A3A3A);
-            Set("BadgeBackground", 0x1FFFFFFF);
+            BadgeBackground = Set("BadgeBackground", 0x1FFFFFFF);
             Set("HoverBackground", 0x14FFFFFF);
             Set("NeutralBarBrush", 0xFF8A8A8A);
         }
@@ -76,13 +78,14 @@ internal static class Theme
             SecondaryText = Set("SecondaryText", 0xFF5F5F5F);
             Set("TrackBrush", 0x1A000000);
             Set("Divider", 0xFFE5E5E5);
-            Set("BadgeBackground", 0x0F000000);
+            BadgeBackground = Set("BadgeBackground", 0x0F000000);
             Set("HoverBackground", 0x0F000000);
             Set("NeutralBarBrush", 0xFF9A9A9A);
         }
         ErrorBackground = Set("ErrorBackground", 0x26FF8C00);
         Warning = Set("WarningBrush", 0xFFFF8C00);
         Critical = Set("CriticalBrush", 0xFFE81123);
+        CriticalBackground = Set("CriticalBackground", 0x26E81123);
 
         var accent = AccentColor(values, dark);
         Accent = Set("AccentBrush", accent.ToUInt32());
