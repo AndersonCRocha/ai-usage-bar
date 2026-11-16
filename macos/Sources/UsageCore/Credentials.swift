@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The Claude Code login (OAuth) this app piggybacks on. Read-only: the app
@@ -15,10 +16,12 @@ public struct ClaudeCredentials: Equatable, Sendable, CustomStringConvertible {
         self.rateLimitTier = rateLimitTier
     }
 
-    public var isExpired: Bool {
+    public func isExpired(now: Date) -> Bool {
         guard let expiresAt else { return false }
-        return expiresAt < Date()
+        return expiresAt < now
     }
+
+    public var isExpired: Bool { isExpired(now: Date()) }
 
     /// "Max 5x", "Max 20x", "Pro", "Team", ...
     public var planName: String? {
@@ -58,30 +61,135 @@ public enum CredentialsError: Error, Equatable {
 }
 
 public enum CredentialsStore {
-    /// Keychain item (generic password) Claude Code writes on macOS.
+    /// Keychain item (generic password) Claude Code writes on macOS. A custom
+    /// config directory adds a suffix to it; see `service(environment:)`.
     public static let keychainService = "Claude Code-credentials"
 
+    /// The account Claude Code falls back to when `$USER` is unusable.
+    static let fallbackAccount = "claude-code-user"
+
+    /// Characters Claude Code accepts in the account name.
+    private static let accountCharacters = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+    )
+
     /// Blocking (spawns `/usr/bin/security`): call it off the main thread.
-    public static func load() throws -> ClaudeCredentials {
+    public static func load(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        now: Date = Date()
+    ) throws -> ClaudeCredentials {
+        let sources: [() -> Data?] = [
+            { readKeychain(environment: environment) },
+            { readLegacyKeychain(environment: environment) },
+            { readFile(environment: environment, home: home) },
+        ]
+        return try select(from: sources, now: now)
+    }
+
+    /// The first login that is still valid. An expired one is only returned
+    /// when no source holds a valid one, so a leftover Keychain item from an
+    /// older Claude Code cannot shadow the live login: sending its dead token
+    /// on every refresh earns a 429 that never clears.
+    static func select(from sources: [() -> Data?], now: Date) throws -> ClaudeCredentials {
         var sawData = false
-        for source in [readKeychain, readFile] {
+        var expired: ClaudeCredentials?
+        for source in sources {
             guard let data = source() else { continue }
             sawData = true
-            if let credentials = try? ClaudeCredentials.parse(data) { return credentials }
-            if let decoded = hexDecoded(data), let credentials = try? ClaudeCredentials.parse(decoded) {
-                return credentials
+            guard let credentials = parse(data) else { continue }
+            if credentials.isExpired(now: now) {
+                if expired == nil { expired = credentials }
+                continue
             }
+            return credentials
         }
+        if let expired { return expired }
         throw sawData ? CredentialsError.malformed : CredentialsError.notFound
+    }
+
+    /// Plain JSON, or the hex `security -w` prints for a secret it considers
+    /// non-printable.
+    static func parse(_ data: Data) -> ClaudeCredentials? {
+        if let credentials = try? ClaudeCredentials.parse(data) { return credentials }
+        guard let decoded = hexDecoded(data) else { return nil }
+        return try? ClaudeCredentials.parse(decoded)
+    }
+
+    /// Whether any source holds a login at all, valid or not: a missing login
+    /// and an expired one get different messages, so detection reports both as
+    /// connected and lets the fetch tell them apart.
+    public static func hasLogin(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> Bool {
+        readKeychain(environment: environment) != nil
+            || readLegacyKeychain(environment: environment) != nil
+            || readFile(environment: environment, home: home) != nil
+    }
+
+    /// The account Claude Code writes the Keychain item under: `$USER`, or
+    /// `claude-code-user` when it is missing or holds characters Claude Code
+    /// rejects.
+    public static func account(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        let user = environment["USER"] ?? NSUserName()
+        guard !user.isEmpty, user.unicodeScalars.allSatisfy(accountCharacters.contains) else {
+            return fallbackAccount
+        }
+        return user
+    }
+
+    /// The Keychain service Claude Code writes the item under. A custom config
+    /// directory appends the first eight hex digits of its SHA-256, so a user
+    /// who sets `CLAUDE_CONFIG_DIR` keeps a separate item.
+    public static func service(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        guard let directory = secureStorageDirectory(environment: environment) else { return keychainService }
+        let normalized = directory.precomposedStringWithCanonicalMapping
+        let digest = SHA256.hash(data: Data(normalized.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined().prefix(8)
+        return "\(keychainService)-\(hex)"
+    }
+
+    /// The config directory whose hash suffixes the Keychain service, or nil
+    /// when Claude Code uses the unsuffixed name.
+    /// `CLAUDE_SECURESTORAGE_CONFIG_DIR` wins when it is set at all; an empty
+    /// value means "no suffix", the same as leaving it unset.
+    private static func secureStorageDirectory(environment: [String: String]) -> String? {
+        if let storage = environment["CLAUDE_SECURESTORAGE_CONFIG_DIR"] {
+            return storage.isEmpty ? nil : storage
+        }
+        guard let config = environment["CLAUDE_CONFIG_DIR"], !config.isEmpty else { return nil }
+        return config
     }
 
     /// Goes through the `security` tool rather than the Security framework
     /// so the Keychain item's existing access rules apply and macOS does not
     /// ask again every time this app is rebuilt.
-    static func readKeychain() -> Data? {
+    ///
+    /// Asks for the account as well as the service: Claude Code looks its item
+    /// up by both, and a Mac can carry items from older versions that used a
+    /// different account. Without `-a`, `security` answers with whichever it
+    /// finds first, which may be a login that expired months ago.
+    static func readKeychain(environment: [String: String] = ProcessInfo.processInfo.environment) -> Data? {
+        readKeychain(account: account(environment: environment), service: service(environment: environment))
+    }
+
+    /// The pre-2.x lookup, by service alone, for a Mac whose only item was
+    /// written under an account this version no longer derives. Tried after
+    /// the account-scoped one, and `select(from:now:)` keeps an expired result
+    /// from winning over a valid one.
+    static func readLegacyKeychain(environment: [String: String] = ProcessInfo.processInfo.environment) -> Data? {
+        readKeychain(account: nil, service: service(environment: environment))
+    }
+
+    static func readKeychain(account: String?, service: String) -> Data? {
+        var arguments = ["find-generic-password"]
+        if let account { arguments += ["-a", account] }
+        arguments += ["-s", service, "-w"]
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", keychainService, "-w"]
+        process.arguments = arguments
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -92,13 +200,27 @@ public enum CredentialsStore {
         return data
     }
 
-    /// `~/.claude/.credentials.json` (or `$CLAUDE_CONFIG_DIR/.credentials.json`),
-    /// used by Claude Code where there is no Keychain.
-    static func readFile() -> Data? {
-        let environment = ProcessInfo.processInfo.environment
-        let base = environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
-        return try? Data(contentsOf: base.appendingPathComponent(".credentials.json"))
+    /// `~/.claude/.credentials.json`, used by Claude Code where there is no
+    /// Keychain. `CLAUDE_SECURESTORAGE_CONFIG_DIR` overrides it, then
+    /// `CLAUDE_CONFIG_DIR`; an empty value means the default.
+    static func readFile(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> Data? {
+        try? Data(contentsOf: configDirectory(environment: environment, home: home)
+            .appendingPathComponent(".credentials.json"))
+    }
+
+    static func configDirectory(
+        environment: [String: String],
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        let fallback = home.appendingPathComponent(".claude")
+        if let storage = environment["CLAUDE_SECURESTORAGE_CONFIG_DIR"] {
+            return storage.isEmpty ? fallback : URL(fileURLWithPath: storage)
+        }
+        guard let config = environment["CLAUDE_CONFIG_DIR"], !config.isEmpty else { return fallback }
+        return URL(fileURLWithPath: config)
     }
 
     /// `security -w` prints the secret as hex when it contains bytes it

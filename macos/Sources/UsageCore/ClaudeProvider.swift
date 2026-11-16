@@ -11,7 +11,7 @@ public struct ClaudeProvider: UsageProvider {
 
     /// Keychain (`security`) or `~/.claude/.credentials.json`; spawns a process.
     public func detect() -> SetupStatus {
-        CredentialsStore.readKeychain() != nil || CredentialsStore.readFile() != nil ? .connected : .needsLogin
+        CredentialsStore.hasLogin() ? .connected : .needsLogin
     }
 
     public func fetch() async throws -> ProviderFetchResult {

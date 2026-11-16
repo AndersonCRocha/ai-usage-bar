@@ -48,19 +48,29 @@ public sealed record ClaudeCredentials(
 public static class ClaudeCredentialsStore
 {
     /// <summary>
-    /// <c>%USERPROFILE%\.claude\.credentials.json</c>, or
-    /// <c>%CLAUDE_CONFIG_DIR%\.credentials.json</c> when that is set.
+    /// <c>%USERPROFILE%\.claude\.credentials.json</c>, or the same file under
+    /// <c>%CLAUDE_SECURESTORAGE_CONFIG_DIR%</c>, else under
+    /// <c>%CLAUDE_CONFIG_DIR%</c>, when either names a directory.
     /// </summary>
-    public static string DefaultPath
+    public static string DefaultPath => Path.Combine(ConfigDirectory(), ".credentials.json");
+
+    /// <summary>
+    /// The directory Claude Code keeps its login in. It reads
+    /// <c>CLAUDE_SECURESTORAGE_CONFIG_DIR</c> first and only falls back to
+    /// <c>CLAUDE_CONFIG_DIR</c> when that one is unset; either set to an empty
+    /// value means the default directory.
+    /// </summary>
+    internal static string ConfigDirectory(Func<string, string?>? readEnvironment = null, string? home = null)
     {
-        get
-        {
-            var configDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
-            var baseDir = string.IsNullOrEmpty(configDir)
-                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude")
-                : configDir;
-            return Path.Combine(baseDir, ".credentials.json");
-        }
+        var read = readEnvironment ?? Environment.GetEnvironmentVariable;
+        var fallback = Path.Combine(
+            home ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
+
+        var secureStorage = read("CLAUDE_SECURESTORAGE_CONFIG_DIR");
+        if (secureStorage is not null) return secureStorage.Length == 0 ? fallback : secureStorage;
+
+        var configDir = read("CLAUDE_CONFIG_DIR");
+        return string.IsNullOrEmpty(configDir) ? fallback : configDir;
     }
 
     public static ClaudeCredentials Load(string? path = null)

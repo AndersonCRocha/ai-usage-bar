@@ -10,8 +10,23 @@ The app has no login of its own: it reuses Claude Code's login, read only.
 
 | System | Where Claude Code keeps its login |
 |---|---|
-| macOS | Keychain, generic password with service `Claude Code-credentials`. Read it with `/usr/bin/security find-generic-password -s "Claude Code-credentials" -w`. |
-| Linux / Windows | File `~/.claude/.credentials.json` (`%USERPROFILE%\.claude\.credentials.json` on Windows). If `CLAUDE_CONFIG_DIR` is set, use `$CLAUDE_CONFIG_DIR/.credentials.json`. Implemented in `windows/` and `linux/`; *not verified on real machines yet.* |
+| macOS | Keychain, generic password under **account `$USER`** and service `Claude Code-credentials`. Read it with `/usr/bin/security find-generic-password -a "$USER" -s "Claude Code-credentials" -w`. |
+| Linux / Windows | File `~/.claude/.credentials.json` (`%USERPROFILE%\.claude\.credentials.json` on Windows). If `CLAUDE_SECURESTORAGE_CONFIG_DIR` or `CLAUDE_CONFIG_DIR` is set, use `<that directory>/.credentials.json`. Implemented in `windows/` and `linux/`; *not verified on real machines yet.* |
+
+**Ask for the account, not only the service.** Claude Code looks its item up by
+account *and* service, and a Mac can carry items written by older versions under a
+different account (an id instead of `$USER`). `security find-generic-password` with
+`-s` alone answers with whichever item it finds first, which may be a login that
+expired months ago. Sending that dead token on every refresh earns a 401, and after
+enough of them in a row the server answers 429 instead — a rate limit the app can
+never wait out, because the credential never gets better.
+
+- Account: `$USER`, or `claude-code-user` when it is empty or holds anything outside
+  `[A-Za-z0-9._-]`.
+- Service: `Claude Code-credentials`, plus `-<first 8 hex of SHA-256 of the config
+  directory>` when `CLAUDE_SECURESTORAGE_CONFIG_DIR` or `CLAUDE_CONFIG_DIR` names one
+  (`CLAUDE_SECURESTORAGE_CONFIG_DIR` wins; either set to an empty value means the
+  plain name).
 
 Contents (only the fields used):
 
@@ -29,6 +44,7 @@ Contents (only the fields used):
 - `expiresAt` is in **milliseconds** since 1970.
 - Plan name: a `rateLimitTier` containing `max_20x` becomes "Max 20x", containing `max_5x` becomes "Max 5x". Otherwise use `subscriptionType` with its first letter capitalized ("Pro", "Team"…).
 - **Never refresh the token** with the `refreshToken`. Refreshing rotates the refresh token and would sign Claude Code out. If the token expired, show the last cached data and ask the user to open Claude Code.
+- **Prefer a login that is still valid.** With more than one source (two Keychain items, or the Keychain and the file), take the first one whose `expiresAt` is in the future; fall back to an expired one only when no source holds a valid login, so the "login expired" notice still appears when that is really the case.
 - Never write the token to a log, cache or file.
 
 ## 2. Claude: request
