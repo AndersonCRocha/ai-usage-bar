@@ -43,7 +43,8 @@ internal sealed class TrayController : IDisposable
         var darkPanel = Theme.PanelIsDark(store.Settings.IconColor);
         var wanted = store.VisibleProviders
             .Select(id => (Id: id, Segment: TraySegment.Make(
-                id, store.Settings.DisplayFor(id), store.State(id).Snapshot, store.State(id).MessageFor(id), store.State(id).IsRateLimited)))
+                id, store.Settings.DisplayFor(id), store.State(id).Snapshot, store.State(id).MessageFor(id), store.State(id).IsRateLimited,
+                store.State(id).ServiceStatus)))
             .Where(entry => entry.Segment is not null)
             .ToList();
 
@@ -70,7 +71,7 @@ internal sealed class TrayController : IDisposable
             }
             var glyph = store.Settings.Style == TrayStyle.Icon ? InstalledApps.Glyph(id) : null;
             // Redraw only what changed: each new picture is sent to the panel.
-            var key = $"{segment!.RingPercent}|{segment.Severity}|{segment.Number}|{store.Settings.Style}|{store.Settings.ColorAlerts}|{darkPanel}|{glyph is null}";
+            var key = $"{segment!.RingPercent}|{segment.Severity}|{segment.Number}|{segment.Alert}|{store.Settings.Style}|{store.Settings.ColorAlerts}|{darkPanel}|{glyph is null}";
             if (!drawn.TryGetValue(id, out var previous) || previous != key)
             {
                 using var bitmap = TrayIconRenderer.Render(segment, id, store.Settings.Style, glyph, store.Settings.ColorAlerts, darkPanel, IconPixels);
@@ -126,7 +127,7 @@ internal sealed class TrayController : IDisposable
         return
         [
             Item(T("Abrir", "Open"), () => popup.ShowNearPointer()),
-            Item(T("Atualizar agora", "Refresh now"), () => _ = store.RefreshAsync()),
+            Item(T("Atualizar agora", "Refresh now"), () => _ = store.RefreshNowAsync()),
             new NativeMenuItemSeparator(),
             Item(T("Sair do medidor", "Quit"), Quit),
         ];

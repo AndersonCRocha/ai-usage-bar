@@ -4,10 +4,10 @@ import Foundation
 /// Nothing asks it during the wait (timer, popover, refresh button, wake), and the last
 /// numbers stay on screen. Same rules as the Windows and Linux apps.
 public struct RateLimitBackoff: Equatable, Sendable {
-    /// The first wait when the server does not say how long; it doubles with each 429 in a row.
+    /// The first wait; it doubles with each 429 in a row.
     public static let firstWait: TimeInterval = 60
     public static let maxWait: TimeInterval = 600
-    /// The server's own wait (`Retry-After`) is kept within these bounds.
+    /// The server's own wait (`Retry-After`) is kept within these bounds, and counts only when longer than ours.
     public static let minServerWait: TimeInterval = 15
     public static let maxServerWait: TimeInterval = 3600
 
@@ -18,11 +18,14 @@ public struct RateLimitBackoff: Equatable, Sendable {
 
     public init() {}
 
-    /// 1, 2, 4, 8 and then 10 minutes, or the server's wait when it sends one.
+    /// 1, 2, 4, 8 and then 10 minutes, or longer when the server asks for more. A shorter
+    /// server wait does not count: Anthropic's endpoint answers "retry after 0 seconds" and
+    /// then refuses again, so asking every 15 seconds would only keep it refusing.
     public static func wait(strikes: Int, serverWait: TimeInterval?) -> TimeInterval {
-        if let serverWait { return min(max(serverWait, minServerWait), maxServerWait) }
         let doublings = Double(min(max(strikes, 1), 16) - 1)
-        return min(firstWait * pow(2, doublings), maxWait)
+        let own = min(firstWait * pow(2, doublings), maxWait)
+        guard let serverWait else { return own }
+        return max(own, min(max(serverWait, minServerWait), maxServerWait))
     }
 
     public mutating func record(serverWait: TimeInterval?, now: Date = Date()) {

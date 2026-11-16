@@ -71,6 +71,17 @@ Em ⚙︎ no pop-up:
 
 **O que cada IA mostra** (⚙ → a IA → **Na barra de menu**)
 
+### Números do Claude vindos do Claude Code (opcional)
+
+Às vezes o endpoint de uso da Anthropic responde "muitas requisições" por um bom tempo, e aí a aba do Claude pode ficar sem nada para mostrar. O próprio Claude Code recebe os números da sessão (5 h) e da semana a cada resposta e os entrega para a sua [statusline](https://code.claude.com/docs/en/statusline). Ative **⚙ → Claude → Ler uso pelo Claude Code (statusline)** e o app passa a ler esses números lá:
+
+- O `settings.json` do Claude Code (`~/.claude/settings.json`, ou `$CLAUDE_CONFIG_DIR/settings.json`) ganha `"statusLine": {"type": "command", "command": "'…/AIUsageBar' --statusline"}`. Só essa entrada muda; o resto do arquivo fica exatamente como estava.
+- Se você já tinha uma statusline, ela continua funcionando: o app a executa depois de guardar os números, com a mesma entrada. Desligar a opção devolve a sua statusline como estava.
+- O comando guarda só os dois percentuais e quando eles zeram (`~/Library/Application Support/AIUsageBar` no Mac, `%APPDATA%\AIUsageBar` no Windows, `~/.config/AIUsageBar` no Linux). Nada de tokens, de prompts ou de consulta a mais.
+- O app continua consultando o endpoint como antes. Os números do Claude Code substituem os da sessão e da semana quando são mais novos, e a aba mostra só eles, com um aviso, quando o endpoint ainda não respondeu. O limite semanal por modelo, a divisão da semana e o nome do plano continuam vindo só do endpoint.
+
+Só atualiza enquanto você usa o Claude Code no terminal (a aba Code do app Claude não roda comandos de statusline), só nos planos Pro, Max e Ultra, e com o Claude Code 2.1.80 ou mais novo. Duas contas do Claude no mesmo computador não são diferenciadas. Pelo terminal: `AIUsageBar --install-statusline` e `AIUsageBar --uninstall-statusline`. No Windows e no Linux, por enquanto isso só rodou nos testes.
+
 | Serviço | Opções |
 |---|---|
 | Claude | **Só a sessão atual** · **Só a semanal** · **Sessão atual + semanal** (padrão: sessão em cima, semanal embaixo) · **Não mostrar** |
@@ -87,6 +98,8 @@ Tudo é desenhado na cor da barra, como os outros ícones: branco na barra escur
 **Na aba** (⚙ → a IA → **Na aba**, ou clique com o botão direito na aba): o número em cada aba. **Maior uso** (padrão) mostra o limite que estiver mais cheio. Você pode fixar qualquer limite daquela IA: o semanal de todos os modelos do Claude ou o de um modelo, a sessão do Codex, as requisições do mês no Copilot, o total do mês ou o grupo API do Cursor, a cota diária de um modelo do Gemini.
 
 **Cores de alerta na barra** (ligado por padrão): desligue para o anel ou a pizza ficarem sempre na cor da barra, sem o laranja e o vermelho. O pop-up continua mostrando as cores.
+
+**Status do serviço**: quando a página de status pública de uma IA informa um problema (Claude em status.claude.com, Codex em status.openai.com, Copilot em githubstatus.com, Gemini na página de status do Google Cloud), o ícone dela ganha um pequeno selo **!**, laranja enquanto o serviço está instável e vermelho quando está fora do ar, e a aba dela ganha um ⚠. O pop-up mostra o que a página diz (os incidentes abertos e as partes afetadas) com o link **Ver página de status**. Manutenção programada aparece só no pop-up. Cursor e Grok Bot não são verificados (veja [Limitações](#limitações)).
 
 **Idioma**: Português ou English. Vale para o pop-up, a engrenagem, os avisos e os horários (24 h em português, AM/PM em inglês). Numa instalação nova, o app começa no idioma do macOS.
 
@@ -129,7 +142,12 @@ A partir da 0.8.0, o app procura uma versão nova no GitHub ao abrir e a cada 6 
 ## Instalar no Mac
 
 1. Abra o `AIUsageBar-<versão>.dmg` e arraste **AI Usage Bar** para **Aplicativos**.
-2. Na primeira vez, clique com o botão direito no app → **Abrir**. O app ainda não é assinado com um certificado da Apple, então o macOS pede essa confirmação uma vez.
+2. Abra o app uma vez. Ele ainda não é assinado com um certificado da Apple, então o macOS o bloqueia na primeira vez ("A Apple não pôde verificar…"). Libere-o uma vez:
+   - **macOS 15 Sequoia ou mais novo:** clique em **OK** no aviso, abra **Ajustes do Sistema → Privacidade e Segurança**, role até *"AI Usage Bar" foi bloqueado…*, clique em **Abrir Mesmo Assim** e confirme com a sua senha. Nessas versões, o botão direito → Abrir não pula mais esse aviso.
+   - **macOS 13–14:** clique com o botão direito no app → **Abrir** e depois em **Abrir** de novo.
+   - **Ou, em qualquer versão, no Terminal:** `xattr -dr com.apple.quarantine "/Applications/AI Usage Bar.app"` e depois abra normalmente.
+
+   As atualizações instaladas pelo próprio app não pedem isso de novo.
 3. Se você usa o Grok Bot, o macOS pergunta se o app pode acessar **"Grok Bot Safe Storage"** no Keychain. Escolha **Permitir sempre** (veja [Como funciona](#como-funciona)).
 4. Para abrir junto com o Mac: ⚙︎ no pop-up → **Abrir ao iniciar o Mac**.
 
@@ -213,7 +231,20 @@ O `build.sh` baixa o [appimagetool](https://github.com/AppImage/appimagetool) na
 
 ## Como funciona
 
-Cada serviço é um "provedor" (`UsageProvider`) que lê o login de um app já instalado e consulta o mesmo endpoint que esse app usa na própria tela de uso. A consulta acontece a cada 3 minutos, ao abrir o pop-up (para os agentes não consultados no último minuto), a cada minuto enquanto ele fica aberto e quando o Mac acorda. Quando um serviço responde "muitas requisições" (HTTP 429), os últimos números continuam na tela com um aviso e aquele agente espera 1 minuto antes da próxima consulta: 2, 4, 8 e no máximo 10 minutos se continuar acontecendo, ou o tempo do `Retry-After` quando o servidor manda um. O botão de atualizar não pula essa espera. A última resposta fica salva para aparecer na hora em que o app abre.
+Cada serviço é um "provedor" (`UsageProvider`) que lê o login de um app já instalado e consulta o mesmo endpoint que esse app usa na própria tela de uso. A consulta acontece a cada 3 minutos, ao abrir o pop-up (para os agentes não consultados no último minuto), a cada minuto enquanto ele fica aberto e quando o Mac acorda. Quando um serviço responde "muitas requisições" (HTTP 429), os últimos números continuam na tela com um aviso e aquele agente espera 1 minuto antes da próxima consulta: 2, 4, 8 e no máximo 10 minutos se continuar acontecendo, ou mais, quando o `Retry-After` do servidor pede mais. O botão de atualizar não pula essa espera. A última resposta fica salva para aparecer na hora em que o app abre.
+
+### Status do serviço
+
+Além do uso, o app lê a página de status pública de cada agente mostrado a cada 5 minutos, ao abrir o pop-up (se a última leitura tiver mais de 2 minutos), no botão de atualizar e quando o computador acorda. Essas páginas são públicas: sem login, nada sobre você é enviado. Só contam as partes de que o agente depende, então uma queda em outra parte da mesma página não gera aviso:
+
+| Agente | Página de status | Partes que contam |
+|---|---|---|
+| Claude | [status.claude.com](https://status.claude.com) | Claude Code, claude.ai, Claude API |
+| Codex | [status.openai.com](https://status.openai.com) | Codex (Web, API, no ChatGPT Desktop), CLI, extensão do VS Code |
+| GitHub Copilot | [githubstatus.com](https://www.githubstatus.com) | Copilot |
+| Gemini | [status.cloud.google.com](https://status.cloud.google.com) | Gemini Code Assist, que o Gemini CLI usa com login do Google |
+
+Se uma página não responder, a última resposta vale por até 30 minutos e depois é descartada.
 
 | Serviço | Login reaproveitado | Endpoint |
 |---|---|---|
@@ -237,9 +268,10 @@ Os tokens são **só lidos**, em memória: o app nunca grava, renova ou envia um
 - **O endpoint do Cursor não é oficial e ainda não foi verificado com uma conta real.** O `GetCurrentPeriodUsage` é o que a tela de uso do próprio Cursor chama; seus campos são conhecidos por ferramentas de terceiros, e não havia um Cursor instalado na máquina onde ele foi escrito, então só foi testado com exemplos fictícios. O Cursor renova o próprio token quando roda; se ficar parado até o token expirar, o medidor pede para abri-lo uma vez.
 - **Codex, Copilot e Gemini no macOS são novos e ainda não rodaram num Mac com logins de verdade.** Foram escritos para espelhar as versões do Windows e os testes delas.
 - **O endpoint do Copilot não é oficial e ainda não foi verificado com uma conta real.** O `copilot_internal/user` é o que os próprios plugins de editor do GitHub chamam; seus campos são conhecidos por ferramentas de terceiros, não pela documentação do GitHub. Nem todo tipo de token do GitHub é aceito por ele (o token do plugin de editor é o mais seguro). Licenças gerenciadas por uma organização podem não informar cota premium.
+- **Sem status do serviço para Cursor e Grok Bot.** A página de status do Cursor agora redireciona para status.x.ai, que recusa clientes automáticos, então o app não tem como saber quando eles estão fora do ar. O status do Gemini vem do Google Cloud, que cobre o Gemini Code Assist (o Gemini CLI com login do Google), não a API do Gemini com chave.
 - **Os logins expiram.** Claude Code e Grok Bot renovam os próprios tokens quando são usados. Se um deles ficar horas parado, o medidor mostra o último valor e pede para abrir aquele app uma vez.
 - **Grok Bot e Keychain:** o macOS libera a chave do Grok Bot para *esta build* do app. Como o app é assinado só localmente (ad-hoc), cada versão nova, inclusive a instalada pela atualização do app, pede o "Permitir sempre" de novo. Com um certificado Developer ID isso deixa de acontecer.
-- **Sem assinatura da Apple nem da Microsoft ainda**, por isso o passo do botão direito → Abrir no macOS e o aviso do SmartScreen no Windows.
+- **Sem assinatura da Apple nem da Microsoft ainda**, por isso o passo único do "Abrir Mesmo Assim" no macOS (veja [Instalar no Mac](#instalar-no-mac)) e o aviso do SmartScreen no Windows.
 - **O Windows é novo.** O CI compila, roda os testes e renderiza o pop-up com dados de exemplo, mas ele ainda não rodou num PC de verdade com logins reais. Relatos são bem-vindos.
 - **O Linux é mais novo ainda.** O CI compila, roda os testes do núcleo no Linux e renderiza o pop-up; ele também rodou num desktop X11 virtual com uma bandeja de teste (ícones, menus, cliques, posição do pop-up, instância única, primeira abertura sem bandeja). Ainda não rodou num GNOME ou KDE de verdade com logins reais. O Grok Bot no Linux foi escrito a partir de como o Electron guarda segredos lá, sem um Grok Bot para Linux onde testar. Relatos são bem-vindos.
 
@@ -255,6 +287,7 @@ APP="/Applications/AI Usage Bar.app/Contents/MacOS/AIUsageBar"
 "$APP" --snapshot pop.png --fixture docs/sample-usage.json --first-run                                                   # a aba Agentes da primeira vez
 "$APP" --snapshot pop.png --fixture docs/sample-usage.json --update-available 9.9.9                                      # o aviso de "Nova versão"
 "$APP" --snapshot pop.png --fixture docs/sample-usage.json --grok-fixture docs/sample-grok-usage.json --layout list        # todas as IAs juntas; --tab-limit claude=weekly_all escolhe o número de uma aba
+"$APP" --snapshot pop.png --fixture docs/sample-usage.json --service-status claude=degraded                               # um problema na página de status (maintenance, degraded, partial ou major) e o selo na barra
 "$APP" --install-update --no-relaunch   # a atualização do app pela linha de comando: instala uma versão mais nova por cima desta cópia
 ```
 
@@ -274,6 +307,7 @@ Linux (o terminal mostra a saída direto):
 ./AIUsageBar --dump                 # mostra o uso atual em texto (--raw acrescenta as respostas cruas, sem tokens)
 ./AIUsageBar --snapshot pop.png --fixture docs/sample-usage.json --dark   # renderiza o pop-up sem tela; grava também pop-tray.png
 ./AIUsageBar --demo --fixture docs/sample-usage.json --copilot-fixture docs/sample-copilot-usage.json   # bandeja e pop-up reais com dados de exemplo (sem logins nem rede)
+./AIUsageBar --snapshot pop.png --fixture docs/sample-usage.json --service-status claude=degraded   # um problema na página de status e o selo na bandeja (também no Windows)
 ./AIUsageBar --install-update --no-relaunch   # a atualização do app pela linha de comando (o CI acrescenta --as-version 0.0.1)
 ```
 

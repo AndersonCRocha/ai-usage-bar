@@ -26,6 +26,9 @@ enum MenuBarIcon {
         static let singleFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         static let stackedFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
         static let stackedGap: CGFloat = 2.5
+        /// The status page badge: its share of the gauge, and the clear gap around it.
+        static let badgeShare: CGFloat = 0.5
+        static let badgeGap: CGFloat = 1.2
     }
 
     private struct Layout {
@@ -67,8 +70,12 @@ enum MenuBarIcon {
         let separatorWidth = Metrics.separatorPadding * 2 + 1
         let width = layouts.map(\.width).reduce(0, +) + separatorWidth * CGFloat(layouts.count - 1)
 
-        let image = NSImage(size: NSSize(width: ceil(width), height: height), flipped: false) { _ in
+        let image = NSImage(size: NSSize(width: ceil(width), height: height), flipped: false) { rect in
             let foreground = foregroundColor()
+            // The badge punches a gap out of the ring; a layer keeps that gap to this image.
+            let context = NSGraphicsContext.current?.cgContext
+            context?.beginTransparencyLayer(in: rect, auxiliaryInfo: nil)
+            defer { context?.endTransparencyLayer() }
             var x: CGFloat = 0
             for (index, layout) in layouts.enumerated() {
                 if index > 0 {
@@ -103,6 +110,9 @@ enum MenuBarIcon {
             drawGlyph(layout.glyph, provider: segment.provider, in: inner, color: foreground)
         case .percent:
             drawPie(segment, in: frame, foreground: foreground, colorAlerts: colorAlerts)
+        }
+        if let alert = segment.alert {
+            drawBadge(alert, on: frame, foreground: foreground, colorAlerts: colorAlerts)
         }
 
         let textX = frame.maxX + Metrics.ringToText
@@ -195,6 +205,31 @@ enum MenuBarIcon {
         rect.fill(using: .sourceIn)
         context.endTransparencyLayer()
         NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// The service's status page reports a problem: a round "!" badge on the gauge's top-right,
+    /// cut out of the ring so it reads apart from it. The "!" itself is cut out too.
+    private static func drawBadge(_ severity: Severity, on gauge: NSRect, foreground: NSColor, colorAlerts: Bool) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let size = (gauge.width * Metrics.badgeShare).rounded()
+        let badge = CGRect(x: gauge.maxX - size + 1.5, y: gauge.maxY - size, width: size, height: size)
+
+        context.saveGState()
+        context.setBlendMode(.clear)
+        context.fillEllipse(in: badge.insetBy(dx: -Metrics.badgeGap, dy: -Metrics.badgeGap))
+        context.setBlendMode(.normal)
+        let color: NSColor = colorAlerts ? (severity == .critical ? .systemRed : .systemOrange) : foreground
+        context.setFillColor(color.cgColor)
+        context.fillEllipse(in: badge)
+
+        context.setBlendMode(.clear)
+        let stemWidth = max(1.3, size * 0.17)
+        let stem = CGRect(x: badge.midX - stemWidth / 2, y: badge.minY + size * 0.4, width: stemWidth, height: size * 0.4)
+        context.addPath(CGPath(roundedRect: stem, cornerWidth: stemWidth / 2, cornerHeight: stemWidth / 2, transform: nil))
+        context.fillPath()
+        let dot = stemWidth * 1.05
+        context.fillEllipse(in: CGRect(x: badge.midX - dot / 2, y: badge.minY + size * 0.14, width: dot, height: dot))
+        context.restoreGState()
     }
 
     private static func drawText(_ text: String, font: NSFont, color: NSColor, x: CGFloat, baseline: CGFloat, width: CGFloat) {

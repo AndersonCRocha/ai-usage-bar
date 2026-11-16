@@ -18,11 +18,13 @@ public class RateLimitTests
     }
 
     [Fact]
-    public void ServerWaitWinsWithinBounds()
+    public void ServerWaitOnlyMakesItLonger()
     {
-        Assert.Equal(90, RateLimitBackoff.Wait(3, TimeSpan.FromSeconds(90)).TotalSeconds);
-        Assert.Equal(15, RateLimitBackoff.Wait(1, TimeSpan.FromSeconds(2)).TotalSeconds);
-        Assert.Equal(15, RateLimitBackoff.Wait(1, TimeSpan.FromSeconds(-30)).TotalSeconds);
+        Assert.Equal(300, RateLimitBackoff.Wait(1, TimeSpan.FromSeconds(300)).TotalSeconds);
+        Assert.Equal(240, RateLimitBackoff.Wait(3, TimeSpan.FromSeconds(90)).TotalSeconds);
+        Assert.Equal(60, RateLimitBackoff.Wait(1, TimeSpan.Zero).TotalSeconds);
+        Assert.Equal(480, RateLimitBackoff.Wait(4, TimeSpan.Zero).TotalSeconds);
+        Assert.Equal(60, RateLimitBackoff.Wait(1, TimeSpan.FromSeconds(-30)).TotalSeconds);
         Assert.Equal(3600, RateLimitBackoff.Wait(1, TimeSpan.FromDays(1)).TotalSeconds);
     }
 

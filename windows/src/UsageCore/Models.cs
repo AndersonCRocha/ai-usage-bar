@@ -58,7 +58,8 @@ public sealed record BreakdownItem(string Id, string? DisplayName, double Percen
             .Select(word => char.ToUpperInvariant(word[0]) + word[1..].ToLowerInvariant()));
 }
 
-public enum NoteKind { PooledAllowance, BankedResets, TrialUntil, OnDemandEnabled, IncludedSpend, OnDemandSpend, TeamOnDemandSpend }
+/// <summary><see cref="FromClaudeCode"/>: Claude shows only the numbers Claude Code saw, because the usage endpoint has not answered yet.</summary>
+public enum NoteKind { PooledAllowance, BankedResets, TrialUntil, OnDemandEnabled, IncludedSpend, OnDemandSpend, TeamOnDemandSpend, FromClaudeCode }
 
 /// <summary>
 /// Extra facts shown under a service's limits. <see cref="Amount"/>, <see cref="Limit"/> and
@@ -84,6 +85,9 @@ public sealed record SnapshotNote(NoteKind Kind, int Count = 0, DateTimeOffset? 
         NoteKind.TeamOnDemandSpend => T(
             $"Sob demanda da equipe: {UsageFormat.Dollars(Amount)} de {UsageFormat.Dollars(Limit ?? 0)}",
             $"Team on-demand: {UsageFormat.Dollars(Amount)} of {UsageFormat.Dollars(Limit ?? 0)}"),
+        NoteKind.FromClaudeCode => T(
+            "Números do Claude Code no terminal. Os outros limites voltam quando o servidor responder.",
+            "Numbers from Claude Code in the terminal. The other limits come back when the server answers."),
         _ => "",
     };
 }

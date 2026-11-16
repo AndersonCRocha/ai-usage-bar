@@ -15,6 +15,8 @@
             <SolidColorBrush x:Key="HoverBackground" Color="#0F000000" />
             <SolidColorBrush x:Key="ErrorBackground" Color="#26FF8C00" />
             <SolidColorBrush x:Key="WarningBrush" Color="#FF8C00" />
+            <SolidColorBrush x:Key="CriticalBrush" Color="#E81123" />
+            <SolidColorBrush x:Key="CriticalBackground" Color="#26E81123" />
             <SolidColorBrush x:Key="AccentBrush" Color="#0067C0" />
             <SolidColorBrush x:Key="UpdateBackground" Color="#260067C0" />
             <SolidColorBrush x:Key="NeutralBarBrush" Color="#808080" />
@@ -104,6 +106,32 @@
                         <Button HorizontalAlignment="Right" Style="{StaticResource IconButton}" FontSize="12"
                                 Content="&#xE8A7;" ToolTip="{Binding OpenTip}" Command="{Binding OpenCommand}" />
                     </Grid>
+
+                    <!-- The service's status page reports a problem or maintenance: what, and a link to the page. -->
+                    <Border Margin="0,8,0,0" Padding="10,8" CornerRadius="6" Background="{Binding Status.Background}"
+                            Visibility="{Binding StatusVisibility}">
+                        <DockPanel DataContext="{Binding Status}">
+                            <TextBlock DockPanel.Dock="Left" Margin="0,1,8,0" FontFamily="{StaticResource IconFont}"
+                                       Text="&#xE7BA;" Foreground="{Binding IconBrush}" />
+                            <StackPanel>
+                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" FontSize="12" />
+                                <ItemsControl ItemsSource="{Binding Details}" Focusable="False">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Margin="0,2,0,0" Text="{Binding}" TextWrapping="Wrap" FontSize="11.5"
+                                                       Foreground="{DynamicResource SecondaryText}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Margin="0,4,0,0" FontSize="11.5">
+                                    <Hyperlink Command="{Binding LinkCommand}" ToolTip="{Binding LinkTip}"
+                                               Foreground="{DynamicResource AccentBrush}" Focusable="False">
+                                        <Run Text="{Binding LinkText, Mode=OneWay}" />
+                                    </Hyperlink>
+                                </TextBlock>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
 
                     <Border Margin="0,8,0,0" Padding="10,8" CornerRadius="6" Background="{DynamicResource ErrorBackground}"
                             Visibility="{Binding ErrorVisibility}">

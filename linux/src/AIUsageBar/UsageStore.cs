@@ -8,13 +8,30 @@ internal sealed record AgentRow(ProviderId Id, SetupStatus Status, bool IsShown,
 
 internal sealed class ProviderState
 {
+    /// <summary>What is shown: what the agent returned, plus for Claude any newer numbers from Claude Code.</summary>
     public ProviderSnapshot? Snapshot { get; set; }
     public DateTimeOffset? LastUpdated { get; set; }
+    /// <summary>What the agent itself returned last, and when.</summary>
+    public ProviderSnapshot? Fetched { get; set; }
+    public DateTimeOffset? FetchedAt { get; set; }
     public UsageException? Error { get; set; }
     public bool IsLoading { get; set; }
     /// <summary>The last request, successful or not.</summary>
     public DateTimeOffset? LastAttempt { get; set; }
     public RateLimitBackoff Backoff { get; } = new();
+    /// <summary>Claude, with the Claude Code switch off: a rate limit with nothing to show suggests turning it on.</summary>
+    public bool SuggestsClaudeCode { get; set; }
+
+    /// <summary>What the service's status page said last; kept through a failed read for a while (<see cref="StatusSchedule.KeptFor"/>).</summary>
+    public ServiceStatus? ServiceStatus { get; set; }
+    /// <summary>The last successful read of the status page.</summary>
+    public DateTimeOffset? StatusCheckedAt { get; set; }
+    /// <summary>The last read of the status page, successful or not.</summary>
+    public DateTimeOffset? StatusAttempt { get; set; }
+    public bool IsCheckingStatus { get; set; }
+
+    /// <summary>The status page reports a problem: a badge on the tray icon and a warning on the tab.</summary>
+    public bool HasOutage => ServiceStatus?.IsProblem == true;
 
     /// <summary>Waiting out a "too many requests": a notice, not a warning.</summary>
     public bool IsRateLimited => Error?.IsRateLimit == true;
@@ -22,7 +39,11 @@ internal sealed class ProviderState
     /// <summary>An error worth flagging on the tray icon and the tab.</summary>
     public bool HasWarning => Error is not null && !IsRateLimited;
 
-    public string? MessageFor(ProviderId id, DateTimeOffset? now = null) => Error?.MessageFor(id, Backoff.Until, now);
+    public string? MessageFor(ProviderId id, DateTimeOffset? now = null)
+    {
+        if (Error?.MessageFor(id, Backoff.Until, now) is not { } message) return null;
+        return SuggestsClaudeCode && IsRateLimited && Snapshot is null ? message + " " + ClaudeCodeBridge.Hint : message;
+    }
 }
 
 /// <summary>
@@ -35,6 +56,8 @@ internal sealed class UsageStore
     /// <summary>Opening the popup, and every <see cref="OpenTick"/> while it stays open, asks again the agents asked longer ago than this.</summary>
     public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan OpenTick = TimeSpan.FromSeconds(15);
+    /// <summary>How often the numbers Claude Code saved are looked at.</summary>
+    public static readonly TimeSpan ClaudeCodeTick = TimeSpan.FromSeconds(15);
 
     private readonly IReadOnlyList<IUsageProvider> providers;
     private readonly Dictionary<ProviderId, ProviderState> states = [];
@@ -43,14 +66,27 @@ internal sealed class UsageStore
     private DispatcherTimer? openTimer;
     /// <summary>Asks a rate-limited agent again as soon as its wait ends.</summary>
     private DispatcherTimer? retryTimer;
+    /// <summary>Claude Code's status line and the numbers it saved; null in previews and tests.</summary>
+    private readonly ClaudeCodeBridge? claudeCode;
+    private ClaudeCodeReading? claudeCodeReading;
+    private DateTimeOffset? claudeCodeDate;
+    private DispatcherTimer? claudeCodeTimer;
+    /// <summary>Reads the services' status pages; null in previews and tests.</summary>
+    private readonly IServiceStatusFetcher? statusFetcher;
+    private DispatcherTimer? statusTimer;
     private DateTimeOffset lastTick = DateTimeOffset.Now;
 
-    public UsageStore(AppSettings settings, IReadOnlyList<IUsageProvider> providers)
+    public UsageStore(
+        AppSettings settings, IReadOnlyList<IUsageProvider> providers, ClaudeCodeBridge? claudeCode = null, IServiceStatusFetcher? statusFetcher = null)
     {
         Settings = settings;
         this.providers = providers;
+        this.claudeCode = claudeCode;
+        this.statusFetcher = statusFetcher;
         UpdateVisibleProviders();
         LoadCache();
+        ReadsClaudeCode = claudeCode?.IsInstalled() ?? false;
+        LoadClaudeCode();
     }
 
     /// <summary>Fixed data, no network: used by <c>--snapshot</c> and <c>--demo</c>.</summary>
@@ -102,6 +138,9 @@ internal sealed class UsageStore
     /// <summary>Picks a tab without saving anything: used by <c>--snapshot --tab</c>.</summary>
     public void PreviewTab(string key) => requestedTab = key;
 
+    /// <summary>Pretends the status page says this: used by <c>--snapshot --service-status</c> and <c>--demo</c>.</summary>
+    public void PreviewServiceStatus(ProviderId id, ServiceStatus status) => State(id).ServiceStatus = status;
+
     /// <summary>"Set up agents…": opens the Agents tab, also with a single agent.</summary>
     public void ShowAgents() => SelectTab(PopupTabs.AgentsKey);
 
@@ -127,6 +166,7 @@ internal sealed class UsageStore
             UpdateVisibleProviders();
         });
         _ = RefreshAsync();
+        _ = RefreshStatusAsync();
     }
 
     /// <summary>One row per supported agent, connected or not, for the Agents tab.</summary>
@@ -182,11 +222,85 @@ internal sealed class UsageStore
         Changed?.Invoke();
     }
 
+    // MARK: Claude Code
+
+    /// <summary>The ⚙ → Claude switch exists (not in previews).</summary>
+    public bool CanReadClaudeCode => claudeCode is not null;
+
+    /// <summary>Claude Code's status line runs this app and hands it the Claude numbers.</summary>
+    public bool ReadsClaudeCode { get; private set; }
+
+    /// <summary>What Claude Code's status line runs.</summary>
+    public string? ExecutablePath { get; set; }
+
+    /// <summary>Puts the app in Claude Code's status line, or puts the user's status line back.</summary>
+    /// <exception cref="ClaudeCodeSetupException">Claude Code's settings could not be read or written.</exception>
+    public void SetReadsClaudeCode(bool on)
+    {
+        if (claudeCode is null) return;
+        try
+        {
+            if (on && ExecutablePath is { } path) claudeCode.Install(path);
+            else if (!on) claudeCode.Uninstall();
+        }
+        finally
+        {
+            ReadsClaudeCode = claudeCode.IsInstalled();
+            LoadClaudeCode(force: true);
+            Changed?.Invoke();
+        }
+    }
+
+    /// <summary>At launch: points Claude Code's status line at where the app is now, in case it moved.</summary>
+    public void UpdateClaudeCodeCommand()
+    {
+        if (ReadsClaudeCode && ExecutablePath is { } path) claudeCode?.Refresh(path);
+    }
+
+    /// <summary>Reloads the numbers Claude Code saved when they changed.</summary>
+    public void LoadClaudeCode(bool force = false)
+    {
+        if (claudeCode is null) return;
+        var date = claudeCode.ReadingDate();
+        if (force || date != claudeCodeDate)
+        {
+            claudeCodeDate = date;
+            claudeCodeReading = claudeCode.LoadReading();
+        }
+        var visible = VisibleProviders;
+        var changed = ShowClaudeCode();
+        UpdateVisibleProviders();
+        if (changed || !visible.SequenceEqual(VisibleProviders)) Changed?.Invoke();
+        if (VisibleProviders.Except(visible).Any()) _ = RefreshStatusAsync();
+    }
+
+    /// <summary>For <c>--dump</c>.</summary>
+    public ClaudeCodeReading? ClaudeCodeNumbers => claudeCodeReading?.Current(DateTimeOffset.Now);
+
+    /// <summary>Claude's numbers: the endpoint's, with Claude Code's where they are newer. True when something changed.</summary>
+    private bool ShowClaudeCode()
+    {
+        if (claudeCode is null) return false;
+        var state = State(ProviderId.Claude);
+        var (snapshot, updated) = ClaudeCodeUsage.Combine(state.Fetched, state.FetchedAt, claudeCodeReading, DateTimeOffset.Now);
+        var changed = !ClaudeCodeUsage.Same(state.Snapshot, snapshot) || state.LastUpdated != updated || state.SuggestsClaudeCode == ReadsClaudeCode;
+        state.Snapshot = snapshot;
+        state.LastUpdated = updated;
+        state.SuggestsClaudeCode = !ReadsClaudeCode;
+        return changed;
+    }
+
     // MARK: Refreshing
 
     public void Start()
     {
         _ = RefreshAsync();
+        if (claudeCode is not null)
+        {
+            claudeCodeTimer = new DispatcherTimer { Interval = ClaudeCodeTick };
+            claudeCodeTimer.Tick += (_, _) => LoadClaudeCode();
+            claudeCodeTimer.Start();
+        }
         // Ticks every 30 s and refreshes every 3 minutes. A tick long after the last one means
         // the computer slept: then everything is refreshed at once (an agent still waiting out
         // a rate limit keeps waiting).
@@ -197,12 +311,18 @@ internal sealed class UsageStore
             var now = DateTimeOffset.Now;
             var resumed = now - lastTick > TimeSpan.FromMinutes(2);
             lastTick = now;
+            if (resumed) _ = RefreshStatusAsync();
             if (!resumed && now - lastRefresh < RefreshInterval) return;
             lastRefresh = now;
             Resumed?.Invoke();
             await RefreshAsync();
         };
         timer.Start();
+
+        _ = RefreshStatusAsync();
+        statusTimer = new DispatcherTimer { Interval = StatusSchedule.Interval };
+        statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
+        statusTimer.Start();
     }
 
     /// <summary>Raised when a refresh is due, also after the computer wakes up (the updater checks then).</summary>
@@ -211,7 +331,9 @@ internal sealed class UsageStore
     /// <summary>Refreshes what is stale now and every minute while the popup stays open.</summary>
     public void PopupOpened()
     {
+        LoadClaudeCode();
         _ = RefreshIfStaleAsync();
+        _ = RefreshStatusAsync();
         if (openTimer is null)
         {
             openTimer = new DispatcherTimer { Interval = OpenTick };
@@ -236,8 +358,12 @@ internal sealed class UsageStore
     /// </summary>
     public Task RefreshAsync() => RefreshAsync(_ => true);
 
+    /// <summary>The refresh button and "Refresh now": the usage, and the status pages not read in the last few seconds.</summary>
+    public Task RefreshNowAsync() => Task.WhenAll(RefreshAsync(), RefreshStatusAsync(force: true));
+
     private async Task RefreshAsync(Func<ProviderState, bool> wanted)
     {
+        var visible = VisibleProviders;
         UpdateVisibleProviders();
         var now = DateTimeOffset.Now;
         var candidates = Candidates().Select(p => p.Id).ToHashSet();
@@ -278,6 +404,8 @@ internal sealed class UsageStore
             {
                 state.Snapshot = result.Snapshot;
                 state.LastUpdated = DateTimeOffset.Now;
+                state.Fetched = result.Snapshot;
+                state.FetchedAt = state.LastUpdated;
                 state.Error = null;
                 state.Backoff.Reset();
                 SaveCache(id, result.Cache);
@@ -288,9 +416,66 @@ internal sealed class UsageStore
                 if (error is { IsRateLimit: true }) state.Backoff.Record(error.RetryAfter, DateTimeOffset.Now);
             }
         }
+        ShowClaudeCode();
         ScheduleRetry();
         UpdateVisibleProviders();
         Changed?.Invoke();
+        // An agent that just appeared gets its status without waiting for the next tick.
+        if (VisibleProviders.Except(visible).Any()) _ = RefreshStatusAsync();
+    }
+
+    /// <summary>
+    /// Reads the status pages of the agents shown, at most every 2 minutes each (15 seconds with
+    /// <paramref name="force"/>, the refresh button). Independent of the usage refresh: other servers, no rate limit
+    /// shared. A failed read keeps the last status for a while, so one bad answer does not make the badge blink.
+    /// </summary>
+    public async Task RefreshStatusAsync(bool force = false)
+    {
+        if (statusFetcher is null) return;
+        var now = DateTimeOffset.Now;
+        var targets = VisibleProviders
+            .Select(id => (Id: id, Page: id.StatusPage()))
+            .Where(target => target.Page is not null
+                && State(target.Id) is { IsCheckingStatus: false } state && StatusSchedule.IsDue(state.StatusAttempt, now, force))
+            .ToList();
+        if (targets.Count == 0) return;
+
+        foreach (var (id, _) in targets)
+        {
+            State(id).IsCheckingStatus = true;
+            State(id).StatusAttempt = now;
+        }
+
+        var results = await Task.WhenAll(targets.Select(async target =>
+        {
+            try
+            {
+                return (target.Id, Status: (ServiceStatus?)await statusFetcher.FetchAsync(target.Page!));
+            }
+            catch (Exception)
+            {
+                return (target.Id, Status: (ServiceStatus?)null);
+            }
+        }));
+
+        var changed = false;
+        foreach (var (id, status) in results)
+        {
+            var state = State(id);
+            state.IsCheckingStatus = false;
+            var shown = state.ServiceStatus;
+            if (status is not null)
+            {
+                state.ServiceStatus = status;
+                state.StatusCheckedAt = DateTimeOffset.Now;
+            }
+            else
+            {
+                state.ServiceStatus = StatusSchedule.AfterFailure(state.ServiceStatus, state.StatusCheckedAt, DateTimeOffset.Now);
+            }
+            changed |= !Equals(shown, state.ServiceStatus);
+        }
+        if (changed) Changed?.Invoke();
     }
 
     /// <summary>Asks the rate-limited agents again when the first wait ends, instead of at the next 3-minute tick.</summary>
@@ -359,11 +544,8 @@ internal sealed class UsageStore
             try
             {
                 if (!File.Exists(path) || provider.SnapshotFromCache(File.ReadAllBytes(path)) is not { } snapshot) continue;
-                states[provider.Id] = new ProviderState
-                {
-                    Snapshot = snapshot,
-                    LastUpdated = new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero),
-                };
+                var cachedAt = new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
+                states[provider.Id] = new ProviderState { Snapshot = snapshot, LastUpdated = cachedAt, Fetched = snapshot, FetchedAt = cachedAt };
             }
             catch (Exception)
             {

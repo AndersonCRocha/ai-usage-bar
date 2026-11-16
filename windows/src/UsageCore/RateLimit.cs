@@ -10,10 +10,10 @@ namespace AIUsageBar.Core;
 /// </summary>
 public sealed class RateLimitBackoff
 {
-    /// <summary>The first wait when the server does not say how long; it doubles with each 429 in a row.</summary>
+    /// <summary>The first wait; it doubles with each 429 in a row.</summary>
     public static readonly TimeSpan FirstWait = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan MaxWait = TimeSpan.FromMinutes(10);
-    /// <summary>The server's own wait (<c>Retry-After</c>) is kept within these bounds.</summary>
+    /// <summary>The server's own wait (<c>Retry-After</c>) is kept within these bounds, and counts only when longer than ours.</summary>
     public static readonly TimeSpan MinServerWait = TimeSpan.FromSeconds(15);
     public static readonly TimeSpan MaxServerWait = TimeSpan.FromHours(1);
 
@@ -23,12 +23,18 @@ public sealed class RateLimitBackoff
     /// <summary>The agent is not asked again before this moment.</summary>
     public DateTimeOffset? Until { get; private set; }
 
-    /// <summary>1, 2, 4, 8 and then 10 minutes, or the server's wait when it sends one.</summary>
+    /// <summary>
+    /// 1, 2, 4, 8 and then 10 minutes, or longer when the server asks for more. A shorter server wait
+    /// does not count: Anthropic's endpoint answers "retry after 0 seconds" and then refuses again, so
+    /// asking every 15 seconds would only keep it refusing.
+    /// </summary>
     public static TimeSpan Wait(int strikes, TimeSpan? serverWait)
     {
-        if (serverWait is { } server) return server < MinServerWait ? MinServerWait : server > MaxServerWait ? MaxServerWait : server;
         var doubled = FirstWait * Math.Pow(2, Math.Clamp(strikes, 1, 16) - 1);
-        return doubled > MaxWait ? MaxWait : doubled;
+        var own = doubled > MaxWait ? MaxWait : doubled;
+        if (serverWait is not { } server) return own;
+        var bounded = server < MinServerWait ? MinServerWait : server > MaxServerWait ? MaxServerWait : server;
+        return bounded > own ? bounded : own;
     }
 
     public void Record(TimeSpan? serverWait, DateTimeOffset now)

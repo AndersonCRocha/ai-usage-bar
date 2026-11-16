@@ -81,7 +81,7 @@ struct PopoverView: View {
                 ProgressView().controlSize(.small)
             } else {
                 Button {
-                    Task { await store.refresh() }
+                    Task { await store.refreshAll() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -116,6 +116,9 @@ struct PopoverView: View {
                         if store.popupLayout == .tabs {
                             TabLimitPicker(store: store, provider: id)
                         }
+                        if id == .claude, store.canReadClaudeCode {
+                            Toggle(ClaudeCodeBridge.menuTitle, isOn: claudeCodeBinding)
+                        }
                     }
                 }
                 Divider()
@@ -148,6 +151,23 @@ struct PopoverView: View {
         Binding(
             get: { store.menuBarDisplay(for: id) },
             set: { store.setMenuBarDisplay($0, for: id) }
+        )
+    }
+
+    /// Changes Claude Code's settings.json; says why when it can't.
+    private var claudeCodeBinding: Binding<Bool> {
+        Binding(
+            get: { store.readsClaudeCode },
+            set: { newValue in
+                do {
+                    try store.setReadsClaudeCode(newValue)
+                } catch {
+                    let alert = NSAlert()
+                    alert.messageText = ClaudeCodeBridge.menuTitle
+                    alert.informativeText = (error as? ClaudeCodeBridge.Failure)?.message ?? error.localizedDescription
+                    alert.runModal()
+                }
+            }
         )
     }
 
@@ -186,6 +206,10 @@ private struct ProviderSection: View {
                 }
                 .buttonStyle(.borderless)
                 .help(provider.openHelp)
+            }
+
+            if let status = state.serviceStatus, status.isNotice {
+                StatusBanner(provider: provider, status: status)
             }
 
             if state.isRateLimited {
@@ -329,7 +353,7 @@ private struct TabStrip: View {
 
     private func agentTab(_ id: ProviderID) -> some View {
         let state = store.state(for: id)
-        let summary = TabSummary.make(snapshot: state.snapshot, hasError: state.hasWarning, limit: store.tabLimit(for: id))
+        let summary = TabSummary.make(snapshot: state.snapshot, hasError: state.hasWarning || state.hasOutage, limit: store.tabLimit(for: id))
         let selected = store.currentTab == id.rawValue
         let status = summary.isWarning && summary.text != "!" ? summary.text + " ⚠" : summary.text
         let statusColor: Color = summary.text == "–"
@@ -395,7 +419,9 @@ private struct TabStrip: View {
         let status = summary.text == "!" || summary.text == "–"
             ? tr("sem dados", "no data")
             : tr("\(summary.text) usado", "\(summary.text) used")
-        return "\(id.displayName), \(status)"
+        let state = store.state(for: id)
+        let outage = state.hasOutage ? state.serviceStatus.map { ", " + $0.title(for: id) } ?? "" : ""
+        return "\(id.displayName), \(status)\(outage)"
     }
 }
 
@@ -573,6 +599,46 @@ private struct ErrorBanner: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// The service's status page reports a problem: what it says, and a link to read more.
+private struct StatusBanner: View {
+    let provider: ProviderID
+    let status: ServiceStatus
+
+    private var tint: Color {
+        switch status.level {
+        case .operational, .maintenance: .secondary
+        case .degraded, .partialOutage: .orange
+        case .majorOutage: .red
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: status.level == .maintenance ? "wrench.and.screwdriver.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(status.title(for: provider))
+                    .font(.callout.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(status.detailLines, id: \.self) { line in
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button(ServiceStatus.linkTitle) { NSWorkspace.shared.open(status.pageURL) }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .help(status.pageURL.host ?? status.pageURL.absoluteString)
+                    .padding(.top, 1)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

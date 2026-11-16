@@ -67,23 +67,27 @@ public struct MenuBarSegment: Equatable, Sendable {
     public var ringSeverity: Severity
     /// One or two lines; the first one is what the ring shows.
     public var lines: [String]
+    /// The service's status page reports a problem: a warning badge on the icon.
+    public var alert: Severity?
 
-    public init(provider: ProviderID, ringPercent: Double?, ringSeverity: Severity, lines: [String]) {
+    public init(provider: ProviderID, ringPercent: Double?, ringSeverity: Severity, lines: [String], alert: Severity? = nil) {
         self.provider = provider
         self.ringPercent = ringPercent
         self.ringSeverity = ringSeverity
         self.lines = lines
+        self.alert = alert
     }
 
     public static func make(
         provider: ProviderID,
         display: MenuBarDisplay,
         snapshot: ProviderSnapshot?,
-        hasError: Bool
+        hasError: Bool,
+        alert: Severity? = nil
     ) -> MenuBarSegment? {
         if display == .hidden { return nil }
         guard let items = snapshot?.items, !items.isEmpty else {
-            return MenuBarSegment(provider: provider, ringPercent: nil, ringSeverity: .normal, lines: [hasError ? "!" : "–"])
+            return MenuBarSegment(provider: provider, ringPercent: nil, ringSeverity: .normal, lines: [hasError ? "!" : "–"], alert: alert)
         }
 
         let session = items.first { $0.group == .session }
@@ -104,7 +108,8 @@ public struct MenuBarSegment: Equatable, Sendable {
             provider: provider,
             ringPercent: ring.percent,
             ringSeverity: ring.severity,
-            lines: shown.map { UsageFormat.percent($0.percent) }
+            lines: shown.map { UsageFormat.percent($0.percent) },
+            alert: alert
         )
     }
 }

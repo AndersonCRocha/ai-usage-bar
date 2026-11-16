@@ -88,6 +88,8 @@ Everything is drawn in the menu bar's own color, like other menu bar icons: whit
 
 **Alert colors in menu bar** (on by default): turn it off to keep the ring or pie in the menu bar color, without orange or red. The popover keeps its colors.
 
+**Service status**: when an AI's public status page reports a problem (Claude on status.claude.com, Codex on status.openai.com, Copilot on githubstatus.com, Gemini on Google Cloud's status page), its icon gets a small **!** badge, orange while the service is degraded and red when it is down, and its tab gets a ⚠. The popup says what the page reports (the open incidents and which parts are affected) with a **View status page** link. Planned maintenance shows only in the popup. Cursor and Grok Bot are not checked (see [Limitations](#limitations)).
+
 **Language**: English or Português. Applies to the popover, the gear menu, messages and times (AM/PM in English, 24-hour in Portuguese). A fresh install starts in the macOS language.
 
 The icons are the agents' own official artwork, cut out at runtime from what is installed on the computer: the meter keeps only the artwork and drops the colored background, and draws it in the menu bar's or taskbar's color. Claude, Cursor and Grok Bot come from their apps (on Windows also from Microsoft Store installs; on Linux, where there is no official Claude app, Claude's star comes from the Claude Code extension); GitHub Copilot, Codex and Gemini live in editors, so theirs come from their official editor extensions (`github.copilot-chat`, OpenAI's `openai.chatgpt` Codex extension, Google's `google.geminicodeassist`; also found in VS Code Insiders and Cursor). No brand artwork ships with this repository. If an icon cannot be found, the service's initial is shown instead.
@@ -129,7 +131,12 @@ From 0.8.0 on, the app looks for a new release on GitHub when it starts and ever
 ## Install on a Mac
 
 1. Open `AIUsageBar-<version>.dmg` and drag **AI Usage Bar** into **Applications**.
-2. The first time, right-click the app → **Open**. The app is not signed with an Apple certificate yet, so macOS asks for this confirmation once.
+2. Open it once. The app is not signed with an Apple certificate yet, so macOS blocks it the first time ("Apple could not verify…"). Allow it once:
+   - **macOS 15 Sequoia or later:** click **Done** (or **OK**) on the warning, open **System Settings → Privacy & Security**, scroll down to *"AI Usage Bar" was blocked…*, click **Open Anyway** and confirm with your password. Right-click → Open no longer skips this warning on these versions.
+   - **macOS 13–14:** right-click the app → **Open**, then **Open** again.
+   - **Or, on any version, in Terminal:** `xattr -dr com.apple.quarantine "/Applications/AI Usage Bar.app"`, then open it normally.
+
+   Updates installed from inside the app do not ask again.
 3. If you use Grok Bot, macOS asks whether the app may access **"Grok Bot Safe Storage"** in the Keychain. Choose **Always Allow** (see [How it works](#how-it-works)).
 4. To start with your Mac: ⚙︎ in the popover → **Open at login**.
 
@@ -213,7 +220,31 @@ dotnet run --project src/AIUsageBar                    # run from source
 
 ## How it works
 
-Each service is a provider (`UsageProvider`) that reads the login of an app that is already installed and calls the same endpoint that app uses for its own usage screen. It refreshes every 3 minutes, when the popover opens (the agents not checked in the last minute), every minute while it stays open, and when the Mac wakes up. When a service answers "too many requests" (HTTP 429), the last numbers stay on screen with a notice and that agent waits 1 minute before it is asked again: 2, 4, 8 and at most 10 minutes if it keeps happening, or the server's `Retry-After` when it sends one. The refresh button does not skip that wait. The last response is cached so something shows up as soon as the app starts.
+Each service is a provider (`UsageProvider`) that reads the login of an app that is already installed and calls the same endpoint that app uses for its own usage screen. It refreshes every 3 minutes, when the popover opens (the agents not checked in the last minute), every minute while it stays open, and when the Mac wakes up. When a service answers "too many requests" (HTTP 429), the last numbers stay on screen with a notice and that agent waits 1 minute before it is asked again: 2, 4, 8 and at most 10 minutes if it keeps happening, or longer when the server's `Retry-After` asks for more. The refresh button does not skip that wait. The last response is cached so something shows up as soon as the app starts.
+
+### Service status
+
+Apart from usage, the app reads each shown agent's public status page every 5 minutes, when the popup opens (if older than 2 minutes), on the refresh button and when the computer wakes up. These pages are public: no login, nothing about you is sent. Only the parts an agent relies on count, so an outage elsewhere on the same page does not raise a warning:
+
+| Agent | Status page | Parts that count |
+|---|---|---|
+| Claude | [status.claude.com](https://status.claude.com) | Claude Code, claude.ai, Claude API |
+| Codex | [status.openai.com](https://status.openai.com) | Codex (Web, API, in ChatGPT Desktop), CLI, VS Code extension |
+| GitHub Copilot | [githubstatus.com](https://www.githubstatus.com) | Copilot |
+| Gemini | [status.cloud.google.com](https://status.cloud.google.com) | Gemini Code Assist, which the Gemini CLI uses with a Google login |
+
+If a page does not answer, the last answer stays for up to 30 minutes and is then dropped.
+
+### Claude's numbers from Claude Code (optional)
+
+Anthropic's usage endpoint sometimes answers "too many requests" for a long while, and then the Claude tab may have nothing to show. Claude Code itself gets the session (5 h) and weekly numbers with every response and hands them to its [status line](https://code.claude.com/docs/en/statusline). Turn on **⚙ → Claude → Read usage from Claude Code (status line)** and the app reads them there:
+
+- Claude Code's `settings.json` (`~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json`) gets `"statusLine": {"type": "command", "command": "'…/AIUsageBar' --statusline"}`. Only that entry changes; the rest of the file stays exactly as it was.
+- If you already had a status line, it keeps working: the app runs it after saving the numbers, with the same input. Turning the option off puts your status line back as it was.
+- The command saves only the two percentages and when they reset (`~/Library/Application Support/AIUsageBar` on a Mac, `%APPDATA%\AIUsageBar` on Windows, `~/.config/AIUsageBar` on Linux). No tokens, no prompts, no extra request.
+- The app still asks the endpoint as before. Claude Code's numbers replace the session and weekly ones when they are newer, and the tab shows them alone, with a note, when the endpoint has not answered yet. The weekly limit per model, the weekly split and the plan name still come only from the endpoint.
+
+It updates only while you use Claude Code in a terminal (the Code tab of the Claude desktop app does not run status line commands), only for Pro, Max and Ultra, and with Claude Code 2.1.80 or newer. Two Claude accounts on one computer are not told apart. From a terminal: `AIUsageBar --install-statusline` and `AIUsageBar --uninstall-statusline`. On Windows and Linux this has only run in tests so far.
 
 | Service | Login reused | Endpoint |
 |---|---|---|
@@ -237,9 +268,10 @@ Tokens are **read only**, in memory: the app never writes, refreshes or sends a 
 - **The Cursor endpoint is unofficial and not yet verified against a real account.** `GetCurrentPeriodUsage` is what Cursor's own usage screen calls; its fields are known from third-party tools, and no Cursor was installed on the machine where it was written, so it has only been tested against made-up samples. Cursor renews its own token when it runs; if it sits idle until the token expires, the meter asks you to open it once.
 - **Codex, Copilot and Gemini on macOS are new and have not run on a Mac with real logins yet.** They were written to mirror the Windows versions and their tests.
 - **The Copilot endpoint is unofficial and not yet verified against a real account.** `copilot_internal/user` is what GitHub's own editor plugins call; its fields are known from third-party tools, not from GitHub's documentation. Not every kind of GitHub token is accepted by it (the editor plugin's token is the safest). Organization-managed seats may report no premium allowance.
+- **No service status for Cursor and Grok Bot.** Cursor's status page now redirects to status.x.ai, which turns automated clients away, so the app cannot tell when they are down. Gemini's status comes from Google Cloud, which covers Gemini Code Assist (the Gemini CLI with a Google login), not the API-key Gemini API.
 - **Logins expire.** Claude Code and Grok Bot refresh their own tokens when used. If one of them sits idle for hours, the meter shows the last value and asks you to open that app once.
 - **Grok Bot and the Keychain:** macOS grants the Grok Bot key to *this build* of the app. Because the app is only signed locally (ad-hoc), each new version, including one installed by the in-app update, asks for "Always Allow" again. A Developer ID certificate removes that.
-- **Not signed by Apple or Microsoft yet**, hence the right-click → Open step on macOS and the SmartScreen prompt on Windows.
+- **Not signed by Apple or Microsoft yet**, hence the one-time "Open Anyway" step on macOS (see [Install on a Mac](#install-on-a-mac)) and the SmartScreen prompt on Windows.
 - **Windows is new.** CI builds it, runs its tests and renders its popup from sample data, but it has not run on a real PC with real logins yet. Reports are welcome.
 - **Linux is newer still.** CI builds it, runs the core tests on Linux and renders its popup; it was also run on a virtual X11 desktop against a stand-in tray (icons, menus, clicks, popup placement, single instance, first run without a tray). It has not run on a real GNOME or KDE desktop with real logins yet. Grok Bot on Linux is written from how Electron stores secrets there, without a Linux Grok Bot to try it on. Reports are welcome.
 
@@ -257,6 +289,7 @@ APP="/Applications/AI Usage Bar.app/Contents/MacOS/AIUsageBar"
 "$APP" --snapshot pop.png --fixture docs/sample-usage.json --first-run                                                   # the first-run Agents tab
 "$APP" --snapshot pop.png --fixture docs/sample-usage.json --update-available 9.9.9                                      # the "New version" banner
 "$APP" --snapshot pop.png --fixture docs/sample-usage.json --grok-fixture docs/sample-grok-usage.json --layout list        # all AIs together; --tab-limit claude=weekly_all picks a tab's number
+"$APP" --snapshot pop.png --fixture docs/sample-usage.json --service-status claude=degraded                               # a status page problem (maintenance, degraded, partial or major) and its menu bar badge
 "$APP" --install-update --no-relaunch   # the in-app update from the command line: installs a newer release over this copy
 ```
 
@@ -276,6 +309,7 @@ Linux (a terminal shows the output directly):
 ./AIUsageBar --dump                 # prints current usage as text (--raw adds the raw responses, no tokens)
 ./AIUsageBar --snapshot pop.png --fixture docs/sample-usage.json --dark   # renders the popup without a display; also writes pop-tray.png
 ./AIUsageBar --demo --fixture docs/sample-usage.json --copilot-fixture docs/sample-copilot-usage.json   # real tray + popup on sample data (no logins, no network)
+./AIUsageBar --snapshot pop.png --fixture docs/sample-usage.json --service-status claude=degraded   # a status page problem and its tray badge (also on Windows)
 ./AIUsageBar --install-update --no-relaunch   # the in-app update from the command line (CI adds --as-version 0.0.1)
 ```
 

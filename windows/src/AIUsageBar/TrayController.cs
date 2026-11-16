@@ -34,7 +34,8 @@ internal sealed class TrayController : IDisposable
         var darkTaskbar = Theme.TaskbarIsDark;
         var wanted = store.VisibleProviders
             .Select(id => (Id: id, Segment: TraySegment.Make(
-                id, store.Settings.DisplayFor(id), store.State(id).Snapshot, store.State(id).MessageFor(id), store.State(id).IsRateLimited)))
+                id, store.Settings.DisplayFor(id), store.State(id).Snapshot, store.State(id).MessageFor(id), store.State(id).IsRateLimited,
+                store.State(id).ServiceStatus)))
             .Where(entry => entry.Segment is not null)
             .ToList();
 
@@ -96,7 +97,7 @@ internal sealed class TrayController : IDisposable
         previous?.Dispose();
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add(T("Abrir", "Open"), null, (_, _) => popup.ShowNearCursor());
-        menu.Items.Add(T("Atualizar agora", "Refresh now"), null, async (_, _) => await store.RefreshAsync());
+        menu.Items.Add(T("Atualizar agora", "Refresh now"), null, async (_, _) => await store.RefreshNowAsync());
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(T("Sair do medidor", "Quit"), null, (_, _) => System.Windows.Application.Current.Shutdown());
         return menu;

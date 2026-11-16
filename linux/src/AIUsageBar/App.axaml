@@ -15,6 +15,7 @@
         <SolidColorBrush x:Key="ErrorBackground" Color="#26FF8C00" />
         <SolidColorBrush x:Key="WarningBrush" Color="#FF8C00" />
         <SolidColorBrush x:Key="CriticalBrush" Color="#E81123" />
+        <SolidColorBrush x:Key="CriticalBackground" Color="#26E81123" />
         <SolidColorBrush x:Key="AccentBrush" Color="#3584E4" />
         <SolidColorBrush x:Key="UpdateBackground" Color="#263584E4" />
         <SolidColorBrush x:Key="NeutralBarBrush" Color="#808080" />
@@ -71,6 +72,25 @@
         </Style>
         <Style Selector="Button.tab:pointerover">
             <Setter Property="Background" Value="{DynamicResource HoverBackground}" />
+        </Style>
+
+        <!-- A text link (the status page): accent-colored text, underlined under the pointer. -->
+        <Style Selector="Button.link">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <ContentPresenter Content="{TemplateBinding Content}" Background="{TemplateBinding Background}" />
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="Button.link:pointerover /template/ ContentPresenter">
+            <Setter Property="TextBlock.TextDecorations" Value="Underline" />
         </Style>
     </Application.Styles>
 </Application>

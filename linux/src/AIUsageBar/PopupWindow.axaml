@@ -152,6 +152,28 @@
                                         </Button>
                                     </Grid>
 
+                                    <!-- The service's status page reports a problem or maintenance: what, and a link to the page. -->
+                                    <Border Margin="0,8,0,0" Padding="10,8" CornerRadius="6" Background="{Binding Status.Background}"
+                                            IsVisible="{Binding StatusVisible}">
+                                        <DockPanel>
+                                            <PathIcon DockPanel.Dock="Left" VerticalAlignment="Top" Margin="0,1,8,0" Width="14" Height="14"
+                                                      Data="{x:Static local:Icons.Warning}" Foreground="{Binding Status.IconBrush}" />
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Status.Title}" FontWeight="SemiBold" TextWrapping="Wrap" FontSize="12" />
+                                                <ItemsControl ItemsSource="{Binding Status.Details}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="x:String">
+                                                            <TextBlock Margin="0,2,0,0" Text="{Binding}" TextWrapping="Wrap" FontSize="11.5"
+                                                                       Foreground="{DynamicResource SecondaryText}" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <Button Classes="link" Margin="0,4,0,0" Content="{Binding Status.LinkText}"
+                                                        ToolTip.Tip="{Binding Status.LinkTip}" Command="{Binding Status.LinkCommand}" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </Border>
+
                                     <Border Margin="0,8,0,0" Padding="10,8" CornerRadius="6" Background="{DynamicResource ErrorBackground}"
                                             IsVisible="{Binding ErrorVisible}">
                                         <DockPanel>

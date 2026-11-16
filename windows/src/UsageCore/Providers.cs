@@ -51,15 +51,18 @@ internal static class Http
 {
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(20) };
 
-    /// <summary>Sends the request and maps HTTP failures to <see cref="UsageException"/>.</summary>
-    public static async Task<byte[]> SendAsync(HttpRequestMessage request, CancellationToken cancellation)
+    /// <summary>
+    /// Sends the request and maps HTTP failures to <see cref="UsageException"/>. <paramref name="client"/>:
+    /// one with other settings (the status pages' shorter timeout); the shared one by default.
+    /// </summary>
+    public static async Task<byte[]> SendAsync(HttpRequestMessage request, CancellationToken cancellation, HttpClient? client = null)
     {
         request.Headers.UserAgent.ParseAdd("ai-usage-bar");
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         HttpResponseMessage response;
         try
         {
-            response = await Client.SendAsync(request, cancellation).ConfigureAwait(false);
+            response = await (client ?? Client).SendAsync(request, cancellation).ConfigureAwait(false);
         }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException)
         {
