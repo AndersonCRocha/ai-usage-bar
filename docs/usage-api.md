@@ -412,7 +412,7 @@ Each shown agent's public status page is read, apart from usage, so the app can 
 
 | Agent | Feed | Parts that count |
 |---|---|---|
-| Claude | `status.claude.com/api/v2/summary.json` (Atlassian Statuspage) | Claude Code, claude.ai, Claude API |
+| Claude | `status.claude.com/api/v2/summary.json` (Atlassian Statuspage) | Claude Code, Claude API (not claude.ai) |
 | Codex | `status.openai.com/api/v2/summary.json` + `/api/v2/components.json` (incident.io's Statuspage-compatible feed; its summary lists only the first 25 components, before Codex's) | Codex…, CLI, VS Code extension |
 | GitHub Copilot | `www.githubstatus.com/api/v2/summary.json` | Copilot… |
 | Gemini | `status.cloud.google.com/incidents.json` | product `deUeOEPYanfJ9w8cpyBJ` / "Gemini Code Assist" |

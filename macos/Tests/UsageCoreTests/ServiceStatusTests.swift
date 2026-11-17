@@ -12,8 +12,8 @@ final class ServiceStatusTests: XCTestCase {
 
     private func data(_ json: String) -> Data { Data(json.utf8) }
 
-    /// Trimmed from status.claude.com while claude.ai had an incident.
-    private let claudeDegraded = """
+    /// status.claude.com on 2026-11-16, trimmed: only claude.ai had an incident.
+    private let claudeAiDegraded = """
     {
       "page": {"url": "https://status.claude.com"},
       "status": {"indicator": "minor", "description": "Partially Degraded Service"},
@@ -33,16 +33,38 @@ final class ServiceStatusTests: XCTestCase {
     }
     """
 
+    func testClaudeAiProblemsDoNotCount() throws {
+        let status = try ServiceStatus.statuspage(summary: data(claudeAiDegraded), page: claude)
+        XCTAssertEqual(status.level, .operational)
+        XCTAssertEqual(status.components, [])
+        XCTAssertEqual(status.incidents, [])
+        XCTAssertFalse(status.isNotice)
+    }
+
     func testClaudeIncidentOnAPartThatMatters() throws {
-        let status = try ServiceStatus.statuspage(summary: data(claudeDegraded), page: claude)
+        let json = """
+        {"status": {"indicator": "major"},
+         "components": [
+           {"name": "claude.ai", "status": "degraded_performance"},
+           {"name": "Claude API (api.anthropic.com)", "status": "operational"},
+           {"name": "Claude Code", "status": "degraded_performance"}
+         ],
+         "incidents": [
+           {"name": "Claude unable to join meetings", "status": "investigating", "impact": "major",
+            "components": [{"name": "claude.ai"}]},
+           {"name": "Elevated errors on Claude Code", "status": "identified", "impact": "major",
+            "components": [{"name": "Claude Code"}, {"name": "claude.ai"}]}
+         ]}
+        """
+        let status = try ServiceStatus.statuspage(summary: data(json), page: claude)
         // The incident's "major" impact outranks the component's "degraded".
         XCTAssertEqual(status.level, .partialOutage)
-        XCTAssertEqual(status.components, ["claude.ai"])
-        XCTAssertEqual(status.incidents, ["Claude unable to join meetings"])
+        XCTAssertEqual(status.components, ["Claude Code"])
+        XCTAssertEqual(status.incidents, ["Elevated errors on Claude Code"])
         XCTAssertTrue(status.isProblem)
         XCTAssertEqual(status.severity, .warning)
         XCTAssertEqual(status.title(for: .claude), "Claude is having issues")
-        XCTAssertEqual(status.detailLines, ["Claude unable to join meetings", "Affected: claude.ai"])
+        XCTAssertEqual(status.detailLines, ["Elevated errors on Claude Code", "Affected: Claude Code"])
         XCTAssertEqual(status.pageURL, URL(string: "https://status.claude.com"))
     }
 
@@ -189,6 +211,8 @@ final class ServiceStatusTests: XCTestCase {
         XCTAssertTrue(claude.matches("Claude API (api.anthropic.com)"))
         XCTAssertTrue(claude.matches("CLAUDE CODE"))
         XCTAssertFalse(claude.matches("Claude Console (platform.claude.com)"))
+        XCTAssertFalse(claude.matches("claude.ai"))
+        XCTAssertFalse(claude.matches("Claude Cowork"))
         XCTAssertFalse(claude.matches(nil))
     }
 

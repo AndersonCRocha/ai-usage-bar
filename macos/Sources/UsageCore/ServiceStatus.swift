@@ -52,7 +52,7 @@ public enum StatusLevel: Int, Comparable, Sendable {
 /// What a service's status page says right now about the parts an agent relies on.
 public struct ServiceStatus: Equatable, Sendable {
     public var level: StatusLevel
-    /// The parts that are not working normally ("claude.ai"), in the page's order.
+    /// The parts that are not working normally ("Claude Code"), in the page's order.
     public var components: [String]
     /// Titles of the open incidents on those parts.
     public var incidents: [String]
@@ -133,7 +133,7 @@ extension ProviderID {
             return StatusPage(
                 pageURL: URL(string: "https://status.claude.com")!,
                 feed: .statuspage(summary: URL(string: "https://status.claude.com/api/v2/summary.json")!, components: nil),
-                components: ["Claude Code", "claude.ai", "Claude API"]
+                components: ["Claude Code", "Claude API"]
             )
         case .codex:
             return StatusPage(
