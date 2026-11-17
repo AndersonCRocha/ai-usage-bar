@@ -228,7 +228,7 @@ Apart from usage, the app reads each shown agent's public status page every 5 mi
 
 | Agent | Status page | Parts that count |
 |---|---|---|
-| Claude | [status.claude.com](https://status.claude.com) | Claude Code, claude.ai, Claude API |
+| Claude | [status.claude.com](https://status.claude.com) | Claude Code, Claude API (a problem only on claude.ai does not count) |
 | Codex | [status.openai.com](https://status.openai.com) | Codex (Web, API, in ChatGPT Desktop), CLI, VS Code extension |
 | GitHub Copilot | [githubstatus.com](https://www.githubstatus.com) | Copilot |
 | Gemini | [status.cloud.google.com](https://status.cloud.google.com) | Gemini Code Assist, which the Gemini CLI uses with a Google login |

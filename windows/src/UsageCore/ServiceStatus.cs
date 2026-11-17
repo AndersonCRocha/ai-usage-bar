@@ -56,7 +56,7 @@ public static class StatusLevels
 }
 
 /// <summary>What a service's status page says right now about the parts an agent relies on.</summary>
-/// <param name="Components">The parts that are not working normally ("claude.ai"), in the page's order.</param>
+/// <param name="Components">The parts that are not working normally ("Claude Code"), in the page's order.</param>
 /// <param name="Incidents">Titles of the open incidents on those parts.</param>
 /// <param name="PageUrl">The page people open to read more.</param>
 public sealed record ServiceStatus(StatusLevel Level, IReadOnlyList<string> Components, IReadOnlyList<string> Incidents, Uri PageUrl)
@@ -113,7 +113,7 @@ public sealed record ServiceStatus(StatusLevel Level, IReadOnlyList<string> Comp
             : null;
     }
 
-    /// <summary>What <c>--dump</c> prints: "Claude is having issues — Elevated error rates; Affected: claude.ai".</summary>
+    /// <summary>What <c>--dump</c> prints: "Claude is having issues — Elevated error rates; Affected: Claude Code".</summary>
     public string Summary(ProviderId provider) =>
         Title(provider) + (DetailLines.Count > 0 ? " — " + string.Join("; ", DetailLines) : "");
 
@@ -260,7 +260,7 @@ public static class StatusPages
         ProviderId.Claude => new(
             new Uri("https://status.claude.com"),
             new StatusFeed.Statuspage(new Uri("https://status.claude.com/api/v2/summary.json")),
-            ["Claude Code", "claude.ai", "Claude API"]),
+            ["Claude Code", "Claude API"]),
         ProviderId.Codex => new(
             new Uri("https://status.openai.com"),
             new StatusFeed.Statuspage(

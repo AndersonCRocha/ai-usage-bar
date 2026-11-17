@@ -239,7 +239,7 @@ Além do uso, o app lê a página de status pública de cada agente mostrado a c
 
 | Agente | Página de status | Partes que contam |
 |---|---|---|
-| Claude | [status.claude.com](https://status.claude.com) | Claude Code, claude.ai, Claude API |
+| Claude | [status.claude.com](https://status.claude.com) | Claude Code, Claude API (problema só no claude.ai não conta) |
 | Codex | [status.openai.com](https://status.openai.com) | Codex (Web, API, no ChatGPT Desktop), CLI, extensão do VS Code |
 | GitHub Copilot | [githubstatus.com](https://www.githubstatus.com) | Copilot |
 | Gemini | [status.cloud.google.com](https://status.cloud.google.com) | Gemini Code Assist, que o Gemini CLI usa com login do Google |

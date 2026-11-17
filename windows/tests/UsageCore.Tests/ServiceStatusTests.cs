@@ -22,16 +22,22 @@ public class ServiceStatusTests
             { "id": "a", "name": "claude.ai", "status": "degraded_performance", "group": false },
             { "id": "b", "name": "Claude Console (platform.claude.com)", "status": "operational", "group": false },
             { "id": "c", "name": "Claude API (api.anthropic.com)", "status": "operational", "group": false },
-            { "id": "d", "name": "Claude Code", "status": "operational", "group": false },
+            { "id": "d", "name": "Claude Code", "status": "degraded_performance", "group": false },
             { "id": "e", "name": "Claude for Government", "status": "major_outage", "group": true },
             "not a component"
           ],
           "incidents": [
             {
-              "name": "Elevated errors on claude.ai",
+              "name": "Claude unable to join meetings",
               "status": "investigating",
               "impact": "major",
               "components": [ { "name": "claude.ai", "status": "degraded_performance" } ]
+            },
+            {
+              "name": "Elevated errors on Claude Code",
+              "status": "identified",
+              "impact": "major",
+              "components": [ { "name": "Claude Code", "status": "degraded_performance" } ]
             },
             {
               "name": "Console login issues",
@@ -69,15 +75,43 @@ public class ServiceStatusTests
 
         // Degraded component, raised by the "major" incident on it.
         Assert.Equal(StatusLevel.PartialOutage, status.Level);
-        Assert.Equal(["claude.ai"], status.Components);
-        // Only the open incident on a part Claude relies on: not the Console one, not the resolved one.
-        Assert.Equal(["Elevated errors on claude.ai"], status.Incidents);
+        Assert.Equal(["Claude Code"], status.Components);
+        // Only the open incident on a part Claude relies on: not claude.ai's, not the Console one, not the resolved one.
+        Assert.Equal(["Elevated errors on Claude Code"], status.Incidents);
         Assert.Equal(new Uri("https://status.claude.com"), status.PageUrl);
         Assert.True(status.IsProblem);
         Assert.True(status.IsNotice);
         Assert.Equal(Severity.Warning, status.Severity);
         Assert.Equal("Claude is having issues", status.Title(ProviderId.Claude));
-        Assert.Equal(["Elevated errors on claude.ai", "Affected: claude.ai"], status.DetailLines);
+        Assert.Equal(["Elevated errors on Claude Code", "Affected: Claude Code"], status.DetailLines);
+    }
+
+    /// <summary>status.claude.com on 2026-11-16, cut down: only claude.ai had an incident.</summary>
+    [Fact]
+    public void AProblemOnlyOnClaudeAiDoesNotCount()
+    {
+        var json = """
+            {
+              "status": { "indicator": "minor", "description": "Partially Degraded Service" },
+              "components": [
+                { "name": "claude.ai", "status": "degraded_performance", "group": false },
+                { "name": "Claude API (api.anthropic.com)", "status": "operational", "group": false },
+                { "name": "Claude Code", "status": "operational", "group": false },
+                { "name": "Claude Cowork", "status": "operational", "group": false }
+              ],
+              "incidents": [
+                { "name": "Claude unable to join meetings", "status": "investigating", "impact": "major",
+                  "components": [ { "name": "claude.ai", "status": "degraded_performance" } ] }
+              ]
+            }
+            """;
+        var status = ServiceStatus.Statuspage(Bytes(json), null, Page(ProviderId.Claude));
+        Assert.Equal(StatusLevel.Operational, status.Level);
+        Assert.Empty(status.Components);
+        Assert.Empty(status.Incidents);
+        Assert.False(status.IsNotice);
+        Assert.False(Page(ProviderId.Claude).Matches("claude.ai"));
+        Assert.True(Page(ProviderId.Claude).Matches("Claude API (api.anthropic.com)"));
     }
 
     [Fact]
@@ -99,7 +133,7 @@ public class ServiceStatusTests
             {
               "status": { "indicator": "critical" },
               "components": [
-                { "name": "claude.ai", "status": "operational" },
+                { "name": "Claude Code", "status": "operational" },
                 { "name": "Claude Console (platform.claude.com)", "status": "major_outage" }
               ],
               "incidents": [
@@ -317,7 +351,7 @@ public class ServiceStatusTests
     public void DumpLineAndPreviewStatuses()
     {
         var status = ServiceStatus.Statuspage(Bytes(ClaudeDegraded), null, Page(ProviderId.Claude));
-        Assert.Equal("Claude is having issues — Elevated errors on claude.ai; Affected: claude.ai", status.Summary(ProviderId.Claude));
+        Assert.Equal("Claude is having issues — Elevated errors on Claude Code; Affected: Claude Code", status.Summary(ProviderId.Claude));
 
         var preview = ServiceStatus.Preview(ProviderId.Codex, "partial")!;
         Assert.Equal(StatusLevel.PartialOutage, preview.Level);
@@ -360,7 +394,7 @@ public class ServiceStatusTests
         ClaudeProvider.SnapshotFromResponse(Bytes(ClaudeTests.Sample), "Max 5x")!;
 
     private static readonly ServiceStatus Degraded =
-        new(StatusLevel.Degraded, ["claude.ai"], ["Elevated error rates"], new Uri("https://status.claude.com"));
+        new(StatusLevel.Degraded, ["Claude Code"], ["Elevated error rates"], new Uri("https://status.claude.com"));
 
     [Fact]
     public void AProblemPutsABadgeAndALineOnTheTrayIcon()
